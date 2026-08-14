@@ -55,3 +55,6 @@ server.log
 # temporary verification screenshots
 verify-*.png
 shot-*.png
+
+# Task A comparison captures (keep committed set as documentation; ignore future runs)
+/task-a-captures/
