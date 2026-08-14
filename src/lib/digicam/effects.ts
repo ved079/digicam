@@ -114,21 +114,23 @@ export function stampTimestamp(blob: Blob, ts: number): Promise<Blob> {
         `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ` +
         `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-      // font sized relative to image — small but legible
-      const fontSize = Math.max(14, Math.round(canvas.width * 0.024));
-      ctx.font = `600 ${fontSize}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
+      // font sized relative to image — SMALLER + THINNER than before, matching
+      // real Canon PowerShot date-imprint references (thin glowing digits,
+      // not bold/blocky). Weight 400 (regular), ~1.6% of image width.
+      const fontSize = Math.max(11, Math.round(canvas.width * 0.016));
+      ctx.font = `400 ${fontSize}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
       ctx.textBaseline = "bottom";
       ctx.textAlign = "right";
 
-      const margin = Math.round(canvas.width * 0.028);
+      const margin = Math.round(canvas.width * 0.022);
       const x = canvas.width - margin;
       const y = canvas.height - margin;
       const tw = ctx.measureText(stamp).width;
 
-      // dark backing strip for legibility against any background
-      const padX = fontSize * 0.45;
-      const padY = fontSize * 0.35;
-      ctx.fillStyle = "rgba(0,0,0,0.32)";
+      // thin translucent backing for legibility (less heavy than before)
+      const padX = fontSize * 0.4;
+      const padY = fontSize * 0.28;
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.fillRect(
         x - tw - padX,
         y - fontSize - padY * 0.4,
@@ -136,14 +138,15 @@ export function stampTimestamp(blob: Blob, ts: number): Promise<Blob> {
         fontSize + padY,
       );
 
-      // amber glow (soft) — the signature digicam stamp color
+      // amber glow — softer/wider outer glow + faint inner core, the
+      // signature digicam stamp look (thin glowing digits, not bold).
       ctx.save();
-      ctx.shadowColor = "rgba(255,160,60,0.85)";
-      ctx.shadowBlur = fontSize * 0.55;
+      ctx.shadowColor = "rgba(255,170,70,0.9)";
+      ctx.shadowBlur = fontSize * 0.75;
       ctx.fillStyle = "#FFB347";
       ctx.fillText(stamp, x, y);
-      // second pass for a stronger core
-      ctx.shadowBlur = fontSize * 0.2;
+      // tighter inner glow for definition without thickening the glyph
+      ctx.shadowBlur = fontSize * 0.3;
       ctx.fillText(stamp, x, y);
       ctx.restore();
 

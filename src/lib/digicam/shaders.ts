@@ -93,29 +93,36 @@ float hash21(vec2 p) {
   p += dot(p, p + 45.32);
   return fract(p.x * p.y);
 }
+// 2D per-pixel hash — both X and Y vary, no directional structure.
+float hash2d(vec2 p) {
+  return hash21(p);
+}
 
-// CCD-style noise: fixed-pattern column/row stripe (stable per pixel)
-// + animated shot noise + chroma noise in shadows.
+// CCD-style noise: true 2D per-pixel randomized luminance + chroma noise.
+// NO column/row stripes (the previous X-only FPN caused visible vertical
+// banding). A very faint residual fixed-pattern is kept at low amplitude
+// using a proper 2D hash so it reads as sensor character, not scanlines.
 // Returns (lumNoise, chromaR, chromaB).
 vec3 ccdNoise(vec2 uv, float luma, float iso) {
   vec2 res = uResolution;
   float scale = uGrainScale;
 
-  // Fixed-pattern: column + row stripes — stable across frames.
-  // This is the most recognizable CCD signature.
-  float colFpn = (hash21(vec2(floor(uv.x * res.x / scale), 0.5)) - 0.5) * 0.6;
-  float rowFpn = (hash21(vec2(0.5, floor(uv.y * res.y / scale))) - 0.5) * 0.35;
+  // Very faint 2D fixed-pattern (both X+Y vary — no banding). Low amplitude
+  // so it never dominates as visible stripes.
+  float fpn = (hash2d(floor(uv * res / scale)) - 0.5) * 0.12;
 
-  // Shot noise — animated, fine sand-like.
-  float shot  = (hash21(uv * res / scale + uTime * 0.7) - 0.5);
-  float shot2 = (hash21(uv * res + uTime * 13.0) - 0.5) * 0.7;
+  // Shot noise — animated, fine, true 2D per-pixel. This is the dominant
+  // organic grain component (salt-and-pepper, no directional structure).
+  float shot  = (hash2d(uv * res / scale + uTime * 0.7) - 0.5);
+  float shot2 = (hash2d(uv * res * 1.7 + uTime * 13.0 + 5.0) - 0.5) * 0.8;
+  float shot3 = (hash2d(uv * res * 0.5 + uTime * 23.0 + 9.0) - 0.5) * 0.6;
 
-  float lum = (colFpn + rowFpn + shot * 0.5 + shot2) * (0.35 + iso * 0.85);
+  float lum = (fpn + shot * 0.6 + shot2 + shot3) * (0.4 + iso * 0.9);
 
-  // Chroma noise — concentrated in shadows (CCD trait).
+  // Chroma noise — concentrated in shadows (CCD trait). True 2D.
   float shadowW = 1.0 - smoothstep(0.04, 0.42, luma);
-  float cnR = (hash21(uv * res * 0.8 + uTime * 2.1 + 17.0) - 0.5);
-  float cnB = (hash21(uv * res * 0.8 + uTime * 2.1 + 83.0) - 0.5);
+  float cnR = (hash2d(uv * res * 0.8 + uTime * 2.1 + 17.0) - 0.5);
+  float cnB = (hash2d(uv * res * 0.8 + uTime * 2.1 + 83.0) - 0.5);
 
   return vec3(lum, cnR * shadowW, cnB * shadowW) * iso;
 }
@@ -332,27 +339,45 @@ void main() {
     }
 
     // ---- B4. Low-contrast haze (milky, lifted blacks) ----
-    // Lift the black point + reduce contrast → the hazy, washed-out quality
-    // of period footage rather than punchy modern output. ~8-12% black lift.
-    col = col * (1.0 - uHazeReduce) + uHazeLift;
+    // Proper tone curve: ADDITIVE black-point lift weighted toward shadows
+    // (blacks → milky grey, midtones barely affected, highlights gently
+    // compressed) — NOT a global multiply (which darkened everything and
+    // caused the murky preview). Matches the reference's hazy, low-DR
+    // character while keeping midtones readable.
+    //   shadows: lifted strongly toward hazeLift
+    //   midtones: ~unchanged brightness
+    //   highlights: soft rolloff (reduced contrast, not darkened)
+    float shadowLift = uHazeLift * (1.0 - vluma);   // strongest in shadows
+    col += shadowLift;                               // additive lift
+    // gentle per-channel highlight compression — soft knee above 1-hazeReduce/2
+    float hlKnee = 1.0 - uHazeReduce * 0.5;
+    col.r = mix(col.r, hlKnee + (1.0 - hlKnee) * pow(max(col.r - hlKnee, 0.0) / max(1.0 - hlKnee, 0.001), 0.7), step(hlKnee, col.r));
+    col.g = mix(col.g, hlKnee + (1.0 - hlKnee) * pow(max(col.g - hlKnee, 0.0) / max(1.0 - hlKnee, 0.001), 0.7), step(hlKnee, col.g));
+    col.b = mix(col.b, hlKnee + (1.0 - hlKnee) * pow(max(col.b - hlKnee, 0.0) / max(1.0 - hlKnee, 0.001), 0.7), step(hlKnee, col.b));
+    // slight overall desaturation for the washed-out look (keeps brightness)
     col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 0.92);
 
     // ---- B5. Heavy constant grain ----
     // Visible grain across flat mid-tone areas, present even in adequate
     // lighting — period sensors couldn't suppress noise like modern ones.
+    // True 2D per-pixel noise (NO column/row stripes — those caused visible
+    // vertical banding in the previous version).
     if (uVideoGrain > 0.001) {
       vec2 gres = uResolution;
       float gscale = uVideoGrainScale;
-      float colFpn = (hash21(vec2(floor(uv.x * gres.x / gscale), 0.5)) - 0.5) * 0.6;
-      float shot = (hash21(uv * gres / gscale + uTime * 9.0) - 0.5);
-      float shot2 = (hash21(uv * gres + uTime * 17.0) - 0.5) * 0.9;
-      float gn = (colFpn + shot * 0.6 + shot2) * uVideoGrain;
+      // faint 2D fixed-pattern (both axes vary — no banding)
+      float fpn = (hash2d(floor(uv * gres / gscale)) - 0.5) * 0.12;
+      // animated 2D shot noise — dominant organic grain
+      float shot  = (hash2d(uv * gres / gscale + uTime * 9.0) - 0.5);
+      float shot2 = (hash2d(uv * gres * 1.7 + uTime * 17.0 + 5.0) - 0.5) * 0.9;
+      float shot3 = (hash2d(uv * gres * 0.5 + uTime * 23.0 + 9.0) - 0.5) * 0.6;
+      float gn = (fpn + shot * 0.6 + shot2 + shot3) * uVideoGrain;
       col.r += gn * 0.22;
       col.g += gn * 0.18;
       col.b += gn * 0.20;
-      // chroma noise too (salt-and-pepper color speckle)
-      col.r += (hash21(uv * gres * 0.7 + uTime * 3.1 + 5.0) - 0.5) * uVideoGrain * 0.09;
-      col.b += (hash21(uv * gres * 0.7 + uTime * 3.1 + 9.0) - 0.5) * uVideoGrain * 0.09;
+      // chroma noise too (salt-and-pepper color speckle) — true 2D
+      col.r += (hash2d(uv * gres * 0.7 + uTime * 3.1 + 5.0) - 0.5) * uVideoGrain * 0.09;
+      col.b += (hash2d(uv * gres * 0.7 + uTime * 3.1 + 9.0) - 0.5) * uVideoGrain * 0.09;
     }
 
     // ---- B6. Vignette (cheap lens elements) ----
