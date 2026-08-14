@@ -171,6 +171,8 @@ export class GLRenderer {
     gl.uniform1f(this.uniforms.uVideoVignette, u.uVideoVignette);
     gl.uniform1f(this.uniforms.uVideoVignetteRadius, u.uVideoVignetteRadius);
     gl.uniform4f(this.uniforms.uCoverUv, u.uCoverUv[0], u.uCoverUv[1], u.uCoverUv[2], u.uCoverUv[3]);
+    gl.uniform3f(this.uniforms.uWarmTint, u.uWarmTint[0], u.uWarmTint[1], u.uWarmTint[2]);
+    gl.uniform1f(this.uniforms.uVideoSaturation, u.uVideoSaturation);
   }
 
   /** Set the canvas drawing-buffer size (device pixels). */

@@ -266,6 +266,10 @@ export interface PipelineUniforms {
   uVideoVignetteRadius: number;
   /** object-cover UV sub-rect (minX,minY,maxX,maxY); (0,0,1,1) = no crop */
   uCoverUv: [number, number, number, number];
+  /** video warm-tint override [R,G,B] multipliers (~3500K); [1,1,1] = no override */
+  uWarmTint: [number, number, number];
+  /** video saturation override (0..1.5); -1 = no override (use preset) */
+  uVideoSaturation: number;
 }
 
 /**
@@ -341,6 +345,8 @@ export function presetToUniforms(
     uVideoVignette: 0,
     uVideoVignetteRadius: 1.0,
     uCoverUv: [0, 0, 1, 1],
+    uWarmTint: [1, 1, 1], // no override by default
+    uVideoSaturation: -1, // -1 = use preset's saturation
   };
 }
 
@@ -356,10 +362,20 @@ export function withVideo(
   intensity: number,
 ): PipelineUniforms {
   const k = clamp(intensity, 0, 1);
+  // Blend the warm tint from neutral [1,1,1] toward the profile's warmTint,
+  // scaled by intensity — so at intensity 0 video = photo color, at 1 = full
+  // warm cast matching the reference.
+  const wt = profile.warmTint;
+  const warmTint: [number, number, number] = [
+    1 + (wt[0] - 1) * k,
+    1 + (wt[1] - 1) * k,
+    1 + (wt[2] - 1) * k,
+  ];
   return {
     ...base,
     uReferenceBase: 1, // shared reference base on (softness, bleed, blowout, haze, grain, vignette)
-    uVideoMode: 1, // video-only interlace stage on
+    uVideoMode: 1, // video-only interlace stage on (interlace value itself may be 0 for progressive refs)
+    uSharpen: 0, // reference has NO in-camera sharpening (no halos) — disable in video mode
     uVideoSoftness: profile.softness * k,
     uChromaBleed: profile.chromaBleed * k,
     uBloomThreshold: profile.bloomThreshold,
@@ -373,6 +389,8 @@ export function withVideo(
     uVideoGrainScale: profile.grainScale,
     uVideoVignette: profile.vignette * k,
     uVideoVignetteRadius: profile.vignetteRadius,
+    uWarmTint: warmTint,
+    uVideoSaturation: profile.saturation,
   };
 }
 

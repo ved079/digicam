@@ -439,7 +439,13 @@ export function CameraScreen() {
       recordStreamRef.current = videoStream;
 
       const mime = pickMime();
-      const rec = new MediaRecorder(combined, mime ? { mimeType: mime } : undefined);
+      // Use a high video bitrate to preserve the subtle chroma bleed + grain
+      // artifacts that would otherwise be smoothed by default low-bitrate
+      // encoding (the reference AVI is Motion JPEG, which is high-bitrate).
+      const recorderOpts: MediaRecorderOptions = mime
+        ? { mimeType: mime, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 128_000 }
+        : { videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 128_000 };
+      const rec = new MediaRecorder(combined, recorderOpts);
       chunksRef.current = [];
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);

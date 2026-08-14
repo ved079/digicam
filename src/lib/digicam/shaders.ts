@@ -86,6 +86,8 @@ uniform float uVideoGrainScale;    // video grain block scale
 uniform float uVideoVignette;      // video-specific vignette
 uniform float uVideoVignetteRadius;
 uniform vec4  uCoverUv; // sub-rect of the source texture for object-cover crop (minX,minY,maxX,maxY); default (0,0,1,1) = no crop
+uniform vec3  uWarmTint;           // video warm-tint override [R,G,B]; [1,1,1] = no override
+uniform float uVideoSaturation;     // video saturation override; -1 = use preset's
 
 // --- hashing (cheap, GPU-friendly) ---
 float hash21(vec2 p) {
@@ -258,6 +260,19 @@ void main() {
   if (uReferenceBase == 1) {
     vec2 vpx = 1.0 / uResolution;
 
+    // ---- B0. Video color override (warm tint + low saturation) ----
+    // The reference AVI has a strong warm/yellow-orange cast (~3500K) and LOW
+    // saturation (muddy/washed, only LED yellows vivid). Apply the warm tint
+    // as a channel multiply and override saturation toward the video target.
+    // Only applies when uWarmTint != [1,1,1] (video mode); photos skip this.
+    if (uWarmTint.r != 1.0 || uWarmTint.g != 1.0 || uWarmTint.b != 1.0) {
+      col *= uWarmTint;
+    }
+    if (uVideoSaturation >= 0.0) {
+      float l = dot(col, vec3(0.299, 0.587, 0.114));
+      col = mix(vec3(l), col, uVideoSaturation);
+    }
+
     // ---- B1. Heavy softness (low effective resolution + optical low-pass) ----
     // Multi-tap blur — heavier than the legacy photo AA-filter softness.
     // Simulates the downsample+upsample + cheap-lens/AA-filter softness.
@@ -282,35 +297,53 @@ void main() {
     float vminc = min(col.r, min(col.g, col.b));
     float vsat = vmaxc - vminc;
 
-    // ---- B2. Chroma bloom / bleed ----
-    // Bright saturated colors (e.g. yellow LED text) bloom/glow into
-    // surrounding dark areas — cheap CCD + heavy chroma subsampling. The
-    // bleed's chroma (delta from its luma) is added, weighted by a
-    // bright+saturated mask, so luma stays sharper than chroma.
+    // ---- B2. Chroma bloom / bleed (LATERAL / horizontal) ----
+    // The reference shows SEVERE LATERAL chroma bleed — bright text and bright
+    // whites smear 2-4px HORIZONTALLY into adjacent darks (composite video +
+    // heavy 4:2:0 chroma subsampling). The smear is the COLOR of the bright
+    // pixel bleeding into darker neighbors — strongest at bright→dark edges.
+    // Two components, both horizontal-directional (luma stays sharp):
     if (uChromaBleed > 0.001) {
+      // (a) Edge-driven horizontal color smear — where a bright pixel sits
+      // next to a dark one, the bright pixel's COLOR bleeds into the dark
+      // side. Detect via horizontal luma gradient; smear the brighter side's
+      // chroma into the current pixel. This is the dominant mechanism and
+      // triggers on ANY bright→dark boundary (text, windows), not just
+      // saturated colors.
+      vec3 sL = texture2D(uVideo, uv - vec2(vpx.x * 2.5, 0.0)).rgb;
+      vec3 sR = texture2D(uVideo, uv + vec2(vpx.x * 2.5, 0.0)).rgb;
+      float lL = dot(sL, vec3(0.299, 0.587, 0.114));
+      float lR = dot(sR, vec3(0.299, 0.587, 0.114));
+      // pick the brighter neighbor → its chroma bleeds in
+      vec3 brightSide = lR > lL ? sR : sL;
+      float brightLum = max(lR, lL);
+      float curLum = vluma;
+      // bleed strength = how much brighter the neighbor is than current
+      float edge = clamp(brightLum - curLum, 0.0, 1.0);
+      float brightChromaMask = edge * smoothstep(0.45, 0.85, brightLum);
+      float bsLum = dot(brightSide, vec3(0.299, 0.587, 0.114));
+      vec3 bsChroma = brightSide - vec3(bsLum);
+      col += bsChroma * brightChromaMask * uChromaBleed * 3.2;
+      // also lift luma slightly at the bleed (glow)
+      col += vec3(brightChromaMask * uChromaBleed * 0.1);
+
+      // (b) saturated-color bloom on bright+saturated (yellow LED signature)
       float bloomMask = smoothstep(uBloomThreshold, 1.0, vluma) *
-                        smoothstep(0.12, 0.55, vsat);
-      // wider horizontal+vertical chroma bleed (6 taps each direction for a
-      // 2-4px soft halo with a hard core)
+                        smoothstep(0.12, 0.5, vsat);
       vec3 bleed = vec3(0.0);
       float wsum2 = 0.0;
-      for (int s = 1; s <= 3; s++) {
-        float off = float(s) * vpx.x * 2.5;
-        float w = (4.0 - float(s)) / 4.0;
+      for (int s = 1; s <= 4; s++) {
+        float off = float(s) * vpx.x * 1.2;
+        float w = (5.0 - float(s)) / 5.0;
         bleed += texture2D(uVideo, uv + vec2(off, 0.0)).rgb * w;
         bleed += texture2D(uVideo, uv - vec2(off, 0.0)).rgb * w;
-        wsum2 += w * 2.0;
-        float offy = float(s) * vpx.y * 2.5;
-        bleed += texture2D(uVideo, uv + vec2(0.0, offy)).rgb * w;
-        bleed += texture2D(uVideo, uv - vec2(0.0, offy)).rgb * w;
         wsum2 += w * 2.0;
       }
       bleed /= max(wsum2, 0.001);
       float bluma = dot(bleed, vec3(0.299, 0.587, 0.114));
       vec3 chromaDelta = (bleed - vec3(bluma)) * bloomMask * uChromaBleed;
-      col += chromaDelta * 2.0;
-      // bright core bloom into luma too (visible glow)
-      col += vec3(bloomMask * uChromaBleed * 0.12);
+      col += chromaDelta * 2.8;
+      col += vec3(bloomMask * uChromaBleed * 0.16);
     }
 
     // ---- B3. Highlight blowout + horizontal light streak ----
@@ -457,4 +490,6 @@ export const UNIFORM_NAMES = [
   "uVideoVignette",
   "uVideoVignetteRadius",
   "uCoverUv",
+  "uWarmTint",
+  "uVideoSaturation",
 ] as const;
