@@ -249,7 +249,8 @@ export interface PipelineUniforms {
   // ---- Video-mode uniforms (distinct camcorder profile) ----
   // All default to 0 / off so photo rendering is unaffected unless a caller
   // explicitly enables video mode via `withVideo()`.
-  uVideoMode: number; // 0 = photo, 1 = video (enables video stages)
+  uReferenceBase: number; // 0 = legacy photo presets, 1 = shared reference base on
+  uVideoMode: number; // 0 = photo, 1 = video (enables video-only interlace stage)
   uVideoSoftness: number;
   uChromaBleed: number;
   uBloomThreshold: number;
@@ -324,6 +325,7 @@ export function presetToUniforms(
     uMirror: opts.mirror ? 1 : 0,
     // video-mode uniforms default OFF — photo rendering is unaffected unless
     // a caller merges in a VideoProfile via withVideo().
+    uReferenceBase: 0,
     uVideoMode: 0,
     uVideoSoftness: 0,
     uChromaBleed: 0,
@@ -356,7 +358,8 @@ export function withVideo(
   const k = clamp(intensity, 0, 1);
   return {
     ...base,
-    uVideoMode: 1,
+    uReferenceBase: 1, // shared reference base on (softness, bleed, blowout, haze, grain, vignette)
+    uVideoMode: 1, // video-only interlace stage on
     uVideoSoftness: profile.softness * k,
     uChromaBleed: profile.chromaBleed * k,
     uBloomThreshold: profile.bloomThreshold,
@@ -370,6 +373,25 @@ export function withVideo(
     uVideoGrainScale: profile.grainScale,
     uVideoVignette: profile.vignette * k,
     uVideoVignetteRadius: profile.vignetteRadius,
+  };
+}
+
+/**
+ * Enable the SHARED reference-base stages on a photo PipelineUniforms set —
+ * heavy softness, chroma bleed, highlight blowout + streak, low-contrast
+ * haze, heavy grain, vignette — WITHOUT the video-only interlace stage.
+ * This brings photos up to the same accuracy bar as the reference frame,
+ * so photo and video look like the same camera's sensor+lens.
+ */
+export function withReferenceBase(
+  base: PipelineUniforms,
+  profile: VideoProfile,
+  intensity: number,
+): PipelineUniforms {
+  const k = clamp(intensity, 0, 1);
+  return {
+    ...withVideo(base, profile, intensity),
+    uVideoMode: 0, // interlace OFF for photos
   };
 }
 

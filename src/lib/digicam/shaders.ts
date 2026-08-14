@@ -63,12 +63,15 @@ uniform vec3  uFlashTint;
 
 uniform float uMirror;
 
-// ---- Video-mode uniforms (distinct camcorder profile; gated by uVideoMode) ----
-// When uVideoMode == 1, the video-specific stages run AFTER the photo stages:
-// extra softness, chroma bloom/bleed, interlace combing, highlight blowout +
-// light streak, low-contrast haze, extra heavy grain, video vignette.
-// Photo mode (uVideoMode == 0) is completely unaffected.
-uniform int   uVideoMode;
+// ---- Reference-base + video-mode uniforms ----
+// uReferenceBase gates the SHARED base stages (heavy softness, chroma bleed,
+// highlight blowout + streak, low-contrast haze, heavy grain, vignette) that
+// match the ground-truth reference frame. These run for BOTH photo and video
+// when enabled, so both modes hit the same accuracy bar.
+// uVideoMode additionally gates the video-ONLY stage (interlace combing) —
+// interlace is a video-codec artifact and must NOT apply to still photos.
+uniform int   uReferenceBase; // 0 = off (legacy photo presets), 1 = shared base on
+uniform int   uVideoMode;      // 1 = video-only stages (interlace) on
 uniform float uVideoSoftness;     // extra blur beyond photo softness
 uniform float uChromaBleed;       // bright-saturated color bloom into darks
 uniform float uBloomThreshold;    // brightness threshold for chroma bloom
@@ -238,19 +241,19 @@ void main() {
   }
 
   // ====================================================================
-  // VIDEO-MODE STAGES (distinct camcorder profile)
-  // Only run when uVideoMode == 1. Photo output (uVideoMode == 0) is
-  // completely unaffected by everything below. These stages model period
-  // SD video footage: heavier softness, chroma bloom/bleed, interlace
-  // combing, highlight blowout + light streak, low-contrast haze, and
-  // constant heavy grain — all meaningfully stronger than still-photo JPEG.
+  // SHARED REFERENCE-BASE STAGES
+  // Run for BOTH photo and video when uReferenceBase == 1. These model the
+  // ground-truth reference frame's sensor/lens character: heavy softness,
+  // chroma bloom/bleed, highlight blowout + light streak, low-contrast haze,
+  // heavy constant grain, and vignette. Photo and video share these so both
+  // hit the same accuracy bar and look like the same camera's sensor+lens.
   // ====================================================================
-  if (uVideoMode == 1) {
+  if (uReferenceBase == 1) {
     vec2 vpx = 1.0 / uResolution;
 
-    // ---- V1. Extra heavy softness (low effective resolution + codec blur) ----
-    // Multi-tap blur — heavier than the photo AA-filter softness. Simulates
-    // the downsample+upsample + heavy codec softness of SD video.
+    // ---- B1. Heavy softness (low effective resolution + optical low-pass) ----
+    // Multi-tap blur — heavier than the legacy photo AA-filter softness.
+    // Simulates the downsample+upsample + cheap-lens/AA-filter softness.
     if (uVideoSoftness > 0.001) {
       vec3 b = vec3(0.0);
       float wsum = 0.0;
@@ -272,33 +275,102 @@ void main() {
     float vminc = min(col.r, min(col.g, col.b));
     float vsat = vmaxc - vminc;
 
-    // ---- V2. Chroma bloom / bleed ----
-    // Bright saturated colors bloom into surrounding dark areas — the cheap
-    // CCD + heavy chroma subsampling signature. Blur the bright-saturated
-    // mask and add it to chroma only (luma stays sharper).
+    // ---- B2. Chroma bloom / bleed ----
+    // Bright saturated colors (e.g. yellow LED text) bloom/glow into
+    // surrounding dark areas — cheap CCD + heavy chroma subsampling. The
+    // bleed's chroma (delta from its luma) is added, weighted by a
+    // bright+saturated mask, so luma stays sharper than chroma.
     if (uChromaBleed > 0.001) {
       float bloomMask = smoothstep(uBloomThreshold, 1.0, vluma) *
-                        smoothstep(0.15, 0.6, vsat);
-      // cheap horizontal+vertical chroma bleed (4 taps)
+                        smoothstep(0.12, 0.55, vsat);
+      // wider horizontal+vertical chroma bleed (6 taps each direction for a
+      // 2-4px soft halo with a hard core)
       vec3 bleed = vec3(0.0);
-      bleed += texture2D(uVideo, uv + vec2(vpx.x * 3.0, 0.0)).rgb;
-      bleed += texture2D(uVideo, uv - vec2(vpx.x * 3.0, 0.0)).rgb;
-      bleed += texture2D(uVideo, uv + vec2(0.0, vpx.y * 3.0)).rgb;
-      bleed += texture2D(uVideo, uv - vec2(0.0, vpx.y * 3.0)).rgb;
-      bleed *= 0.25;
+      float wsum2 = 0.0;
+      for (int s = 1; s <= 3; s++) {
+        float off = float(s) * vpx.x * 2.5;
+        float w = (4.0 - float(s)) / 4.0;
+        bleed += texture2D(uVideo, uv + vec2(off, 0.0)).rgb * w;
+        bleed += texture2D(uVideo, uv - vec2(off, 0.0)).rgb * w;
+        wsum2 += w * 2.0;
+        float offy = float(s) * vpx.y * 2.5;
+        bleed += texture2D(uVideo, uv + vec2(0.0, offy)).rgb * w;
+        bleed += texture2D(uVideo, uv - vec2(0.0, offy)).rgb * w;
+        wsum2 += w * 2.0;
+      }
+      bleed /= max(wsum2, 0.001);
       float bluma = dot(bleed, vec3(0.299, 0.587, 0.114));
-      // add the bleed's chroma (delta from its luma) weighted by the mask
       vec3 chromaDelta = (bleed - vec3(bluma)) * bloomMask * uChromaBleed;
-      col += chromaDelta * 1.4;
-      // bright core bloom into luma too (slight)
-      col += vec3(bloomMask * uChromaBleed * 0.08);
+      col += chromaDelta * 2.0;
+      // bright core bloom into luma too (visible glow)
+      col += vec3(bloomMask * uChromaBleed * 0.12);
     }
 
-    // ---- V3. Interlace combing / motion artifacts ----
-    // Alternating-line horizontal offset — more pronounced where there's
-    // vertical motion or high-contrast horizontal edges. Approximate motion
-    // via the luma difference between the current line and the line above.
-    if (uInterlace > 0.001) {
+    // ---- B3. Highlight blowout + horizontal light streak ----
+    // Bright light sources clip hard to white with zero retained detail,
+    // plus a horizontal light streak/flare — old CCD sensors bloomed badly
+    // and had very limited dynamic range. This is shared (photos clip too).
+    if (uBlowoutThreshold < 1.0) {
+      float overExcess = smoothstep(uBlowoutThreshold, uBlowoutThreshold + 0.06, vluma);
+      col = mix(col, vec3(1.0), overExcess);
+      if (uStreakAmount > 0.001 && overExcess > 0.01) {
+        // horizontal light streak — sample further along x (up to ~18% of
+        // frame width) so the flare reads as a real bloom streak, weighted
+        // by distance falloff.
+        float streak = 0.0;
+        for (int s = 1; s <= 6; s++) {
+          float off = float(s) * vpx.x * 6.0;
+          float w = (7.0 - float(s)) / 7.0;
+          float sl = dot(texture2D(uVideo, uv + vec2(off, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+          streak += smoothstep(uBlowoutThreshold, 1.0, sl) * w;
+          sl = dot(texture2D(uVideo, uv - vec2(off, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+          streak += smoothstep(uBlowoutThreshold, 1.0, sl) * w;
+        }
+        streak = clamp(streak / 7.0, 0.0, 1.0);
+        col += vec3(streak * uStreakAmount * 0.4);
+      }
+    }
+
+    // ---- B4. Low-contrast haze (milky, lifted blacks) ----
+    // Lift the black point + reduce contrast → the hazy, washed-out quality
+    // of period footage rather than punchy modern output. ~8-12% black lift.
+    col = col * (1.0 - uHazeReduce) + uHazeLift;
+    col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 0.92);
+
+    // ---- B5. Heavy constant grain ----
+    // Visible grain across flat mid-tone areas, present even in adequate
+    // lighting — period sensors couldn't suppress noise like modern ones.
+    if (uVideoGrain > 0.001) {
+      vec2 gres = uResolution;
+      float gscale = uVideoGrainScale;
+      float colFpn = (hash21(vec2(floor(uv.x * gres.x / gscale), 0.5)) - 0.5) * 0.6;
+      float shot = (hash21(uv * gres / gscale + uTime * 9.0) - 0.5);
+      float shot2 = (hash21(uv * gres + uTime * 17.0) - 0.5) * 0.9;
+      float gn = (colFpn + shot * 0.6 + shot2) * uVideoGrain;
+      col.r += gn * 0.22;
+      col.g += gn * 0.18;
+      col.b += gn * 0.20;
+      // chroma noise too (salt-and-pepper color speckle)
+      col.r += (hash21(uv * gres * 0.7 + uTime * 3.1 + 5.0) - 0.5) * uVideoGrain * 0.09;
+      col.b += (hash21(uv * gres * 0.7 + uTime * 3.1 + 9.0) - 0.5) * uVideoGrain * 0.09;
+    }
+
+    // ---- B6. Vignette (cheap lens elements) ----
+    // Subtle, consistent corner darkening.
+    if (uVideoVignette > 0.001) {
+      vec2 d = uv - 0.5;
+      float dist = length(d) * 2.0;
+      float vig = smoothstep(uVideoVignetteRadius + 0.42, uVideoVignetteRadius - 0.42, dist);
+      col *= mix(1.0, vig, uVideoVignette);
+    }
+
+    // ====================================================================
+    // VIDEO-ONLY STAGE: interlace combing
+    // Runs ONLY when uVideoMode == 1 (never on still photos — interlace is a
+    // video-codec/temporal artifact). Alternating-line horizontal offset,
+    // amplified by motion (luma delta between adjacent lines).
+    // ====================================================================
+    if (uVideoMode == 1 && uInterlace > 0.001) {
       float lineParity = mod(floor(uv.y * uResolution.y), 2.0);
       float aboveLuma = dot(
         texture2D(uVideo, uv + vec2(0.0, vpx.y)).rgb,
@@ -306,66 +378,9 @@ void main() {
       );
       float motion = clamp(abs(vluma - aboveLuma) * 6.0, 0.0, 1.0);
       float combAmt = uInterlace * (0.4 + uInterlaceMotion * motion);
-      // offset only odd lines (classic interlace combing)
       vec2 iuv = uv + vec2(vpx.x * 1.5 * combAmt * lineParity, 0.0);
       vec3 icol = texture2D(uVideo, iuv).rgb;
-      // blend the offset sample in (creates the horizontal smear on edges)
       col = mix(col, icol, 0.5 * (0.3 + motion));
-    }
-
-    // ---- V4. Highlight blowout + light streak ----
-    // Bright light sources clip hard to white with no detail, plus a
-    // horizontal light streak/flare — old CCD video sensors bloomed badly.
-    if (uBlowoutThreshold < 1.0) {
-      float overExcess = smoothstep(uBlowoutThreshold, uBlowoutThreshold + 0.06, vluma);
-      // hard clip to white
-      col = mix(col, vec3(1.0), overExcess);
-      // horizontal light streak — sample along x, add brightness where the
-      // line has any blown highlight (anamorphic-ish flare approximation)
-      if (uStreakAmount > 0.001 && overExcess > 0.01) {
-        float streak = 0.0;
-        for (int s = 1; s <= 4; s++) {
-          float off = float(s) * vpx.x * 4.0;
-          float sl = dot(texture2D(uVideo, uv + vec2(off, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-          streak += smoothstep(uBlowoutThreshold, 1.0, sl);
-          sl = dot(texture2D(uVideo, uv - vec2(off, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-          streak += smoothstep(uBlowoutThreshold, 1.0, sl);
-        }
-        streak = clamp(streak / 8.0, 0.0, 1.0);
-        col += vec3(streak * uStreakAmount * 0.25);
-      }
-    }
-
-    // ---- V5. Low-contrast haze (milky, lifted blacks) ----
-    // Lift the black point + reduce contrast → the hazy quality of SD video
-    // rather than punchy modern footage.
-    col = col * (1.0 - uHazeReduce) + uHazeLift;
-    col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 0.92);
-
-    // ---- V6. Extra heavy constant grain ----
-    // Old video codecs couldn't suppress sensor noise the way photo JPEG
-    // could — grain is present even in well-lit scenes, heavier than photo.
-    if (uVideoGrain > 0.001) {
-      vec2 gres = uResolution;
-      float gscale = uVideoGrainScale;
-      float colFpn = (hash21(vec2(floor(uv.x * gres.x / gscale), 0.5)) - 0.5) * 0.5;
-      float shot = (hash21(uv * gres / gscale + uTime * 9.0) - 0.5);
-      float shot2 = (hash21(uv * gres + uTime * 17.0) - 0.5) * 0.8;
-      float gn = (colFpn + shot * 0.5 + shot2) * uVideoGrain;
-      col.r += gn * 0.16;
-      col.g += gn * 0.13;
-      col.b += gn * 0.15;
-      // slight chroma noise too
-      col.r += (hash21(uv * gres * 0.7 + uTime * 3.1 + 5.0) - 0.5) * uVideoGrain * 0.05;
-      col.b += (hash21(uv * gres * 0.7 + uTime * 3.1 + 9.0) - 0.5) * uVideoGrain * 0.05;
-    }
-
-    // ---- V7. Video vignette (cheap camcorder lens) ----
-    if (uVideoVignette > 0.001) {
-      vec2 d = uv - 0.5;
-      float dist = length(d) * 2.0;
-      float vig = smoothstep(uVideoVignetteRadius + 0.42, uVideoVignetteRadius - 0.42, dist);
-      col *= mix(1.0, vig, uVideoVignette);
     }
   }
 
@@ -401,6 +416,7 @@ export const UNIFORM_NAMES = [
   "uFlashTint",
   "uMirror",
   // video-mode uniforms
+  "uReferenceBase",
   "uVideoMode",
   "uVideoSoftness",
   "uChromaBleed",

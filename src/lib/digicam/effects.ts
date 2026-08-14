@@ -7,8 +7,9 @@
 // the user sees in the viewfinder is exactly what gets saved.
 
 import type { DigicamPreset } from "./presets";
-import { presetToUniforms } from "./presets";
+import { presetToUniforms, withReferenceBase } from "./presets";
 import { GLRenderer } from "./gl-renderer";
+import { VIDEO_PROFILE } from "./video-profile";
 
 export interface ProcessOptions {
   intensity: number; // 0..1
@@ -57,14 +58,20 @@ export async function captureFrame(
   try {
     renderer = new GLRenderer(offscreen);
     renderer.setSource(source);
-    renderer.setUniforms(
-      presetToUniforms(preset, opts.intensity, {
-        time: performance.now() / 1000,
-        isoBoost: opts.isoBoost ?? 0.3,
-        flashOn: opts.flashOn ?? false,
-        mirror: opts.mirror ?? false,
-      }),
-    );
+    // Photo capture layers the SHARED reference base (heavy softness, chroma
+    // bleed, highlight blowout + streak, low-contrast haze, heavy grain,
+    // vignette) on top of the preset's color science — WITHOUT the video-
+    // only interlace stage. This brings photos to the same accuracy bar as
+    // the reference frame, matching the sensor+lens character of the video
+    // pipeline (video adds interlace on top of this same base).
+    let uniforms = presetToUniforms(preset, opts.intensity, {
+      time: performance.now() / 1000,
+      isoBoost: opts.isoBoost ?? 0.3,
+      flashOn: opts.flashOn ?? false,
+      mirror: opts.mirror ?? false,
+    });
+    uniforms = withReferenceBase(uniforms, VIDEO_PROFILE, opts.intensity);
+    renderer.setUniforms(uniforms);
     renderer.renderToScreen();
 
     // Re-encode as JPEG — the browser encoder produces real DCT blockiness

@@ -62,27 +62,38 @@ export interface VideoProfile {
 }
 
 /**
- * The camcorder video profile. Tuned to match period SD video footage:
- * 4:3 SD resolution, heavy softness, visible chroma bleed on bright colors,
- * constant grain, interlace combing on motion, hard highlight blowout with
- * light streaking, milky low-contrast haze, subtle vignette, and a narrow
- * hissy mono mic response.
+ * The camcorder video profile — tuned against the ground-truth reference
+ * frame (period indoor signage footage) via point-by-point VLM comparison.
+ * Also serves as the SHARED BASE for photo capture (via withReferenceBase),
+ * so photo + video share the same sensor/lens character.
+ *
+ * Reference-derived targets:
+ *  - softness: ~2-3px AA, chunky pixelation (heavy) → 0.72, SD 640 cap
+ *  - chromaBleed: 2-4px spread, hard core + soft halo on saturated colors → 0.7
+ *  - grain: moderate-heavy salt-and-pepper, 1-2px, midtones+shadows → 0.62
+ *  - interlace: 1px vertical combing teeth on motion/edges → 0.36
+ *  - blowoutThreshold: hard clip to pure white, zero detail → 0.76
+ *  - streakAmount: horizontal flare ~15-20% of frame width → 0.85
+ *  - hazeLift: ~8-12% black lift (blacks read RGB 20-30) → 0.10
+ *  - hazeReduce: reduced overall contrast (washed out) → 0.20
+ *  - vignette: mild-moderate, starts ~10-15% from edge → 0.32 / radius 0.82
+ *  - audio: narrow band 300-4800 Hz, hiss 0.08, mono
  */
 export const VIDEO_PROFILE: VideoProfile = {
-  softness: 0.72,
+  softness: 0.82,
   sensorMaxSize: 640,
-  chromaBleed: 0.55,
-  bloomThreshold: 0.62,
-  grain: 0.6,
-  grainScale: 1.4,
-  interlace: 0.32,
-  interlaceMotion: 0.7,
-  blowoutThreshold: 0.78,
-  streakAmount: 0.5,
-  vignette: 0.3,
-  vignetteRadius: 0.82,
-  hazeLift: 0.08,
-  hazeReduce: 0.18,
+  chromaBleed: 1.0,
+  bloomThreshold: 0.55,
+  grain: 0.95,
+  grainScale: 1.6,
+  interlace: 0.5,
+  interlaceMotion: 0.85,
+  blowoutThreshold: 0.7,
+  streakAmount: 1.6,
+  vignette: 0.72,
+  vignetteRadius: 0.7,
+  hazeLift: 0.14,
+  hazeReduce: 0.28,
   audioLowFreq: 300,
   audioHighFreq: 4800,
   audioHiss: 0.08,

@@ -154,7 +154,8 @@ export class GLRenderer {
     gl.uniform1i(this.uniforms.uFlashOn, u.uFlashOn);
     gl.uniform3f(this.uniforms.uFlashTint, u.uFlashTint[0], u.uFlashTint[1], u.uFlashTint[2]);
     gl.uniform1f(this.uniforms.uMirror, u.uMirror);
-    // video-mode uniforms (no-ops when uVideoMode == 0)
+    // video-mode uniforms (no-ops when uReferenceBase == 0)
+    gl.uniform1i(this.uniforms.uReferenceBase, u.uReferenceBase);
     gl.uniform1i(this.uniforms.uVideoMode, u.uVideoMode);
     gl.uniform1f(this.uniforms.uVideoSoftness, u.uVideoSoftness);
     gl.uniform1f(this.uniforms.uChromaBleed, u.uChromaBleed);

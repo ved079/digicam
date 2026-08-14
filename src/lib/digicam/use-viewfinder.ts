@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import { GLRenderer } from "./gl-renderer";
-import { getPreset, presetToUniforms, withVideo } from "./presets";
+import { getPreset, presetToUniforms, withVideo, withReferenceBase } from "./presets";
 import type { PresetId } from "./presets";
 import { VIDEO_PROFILE } from "./video-profile";
 
@@ -120,10 +120,14 @@ export function useViewfinder(
           flashOn: false,
           mirror: p.mirror,
         });
-        // In video mode, layer the distinct camcorder profile on top so the
-        // live preview matches what gets recorded (WYSIWYG for video too).
+        // Photo mode layers the SHARED reference base (heavy softness, chroma
+        // bleed, blowout, haze, grain, vignette — NO interlace); video mode
+        // layers the full video profile (with interlace). Both hit the same
+        // accuracy bar, with video adding the codec-era interlace artifact.
         if (p.videoMode) {
           uniforms = withVideo(uniforms, VIDEO_PROFILE, p.intensity);
+        } else {
+          uniforms = withReferenceBase(uniforms, VIDEO_PROFILE, p.intensity);
         }
         renderer.setUniforms(uniforms);
         renderer.renderToScreen();

@@ -61,3 +61,6 @@ shot-*.png
 
 # user-uploaded reference images
 /upload/
+
+# reference-accuracy comparison screenshots (keep REFERENCE-ACCURACY.md, ignore the PNGs)
+ref/*.png

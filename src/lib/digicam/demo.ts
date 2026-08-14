@@ -12,6 +12,8 @@ export const DEMO_SCENES = [
   "/demo/test-daylight.png",
   "/demo/test-indoor.png",
   "/demo/test-flash.png",
+  // Reference-matching test scene (indoor signage, bright window, yellow LED text)
+  "/demo/test-signage.png",
 ];
 
 const imageCache = new Map<string, HTMLImageElement>();
