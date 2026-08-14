@@ -20,7 +20,7 @@ export interface DigiCamSettings {
 }
 
 const DEFAULT_SETTINGS: DigiCamSettings = {
-  defaultPreset: "y2k",
+  defaultPreset: "powershot",
   intensity: 0.55,
   saveLocation: "app",
   photoQuality: "standard",
@@ -33,7 +33,21 @@ function loadSettings(): DigiCamSettings {
   try {
     const raw = localStorage.getItem("digicam:settings");
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    // Validate the persisted preset id — migrate old/invalid values to the
+    // new researched preset set (y2k→powershot, ccd→cybershot, film→exilim).
+    const validIds: PresetId[] = ["powershot", "cybershot", "exilim", "cell"];
+    const legacyMap: Record<string, PresetId> = {
+      y2k: "powershot",
+      ccd: "cybershot",
+      film: "exilim",
+      flash: "powershot",
+    };
+    if (!validIds.includes(parsed.defaultPreset)) {
+      parsed.defaultPreset =
+        legacyMap[parsed.defaultPreset as string] ?? DEFAULT_SETTINGS.defaultPreset;
+    }
+    return parsed;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -81,6 +95,8 @@ interface DigiCamState {
   // settings
   settings: DigiCamSettings;
   updateSettings: (patch: Partial<DigiCamSettings>) => void;
+  /** Re-load settings from localStorage on the client (avoids SSR mismatch). */
+  hydrate: () => void;
 
   // transient UI
   toast: string | null;
@@ -117,7 +133,7 @@ export const useDigiCam = create<DigiCamState>((set, get) => ({
     }),
   tickRecord: (ms) => set({ recordMs: ms }),
 
-  preset: loadSettings().defaultPreset,
+  preset: DEFAULT_SETTINGS.defaultPreset,
   setPreset: (p) => set({ preset: p }),
 
   photos: [],
@@ -144,7 +160,12 @@ export const useDigiCam = create<DigiCamState>((set, get) => ({
   },
   selectPhoto: (id) => set({ selectedPhotoId: id }),
 
-  settings: loadSettings(),
+  // Use DEFAULT_SETTINGS for initial state (server + client render identically)
+  // then hydrate from localStorage on the client via the `hydrate` action.
+  settings: DEFAULT_SETTINGS,
+  hydrate: () => {
+    set({ settings: loadSettings(), preset: loadSettings().defaultPreset });
+  },
   updateSettings: (patch) => {
     const next = { ...get().settings, ...patch };
     persistSettings(next);

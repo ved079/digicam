@@ -197,7 +197,7 @@ export function ProfileScreen() {
             <span className="font-mono text-[12px] text-muted-foreground">1.0.0</span>
           </Row>
           <Row icon={<Sparkles size={18} />} label="Made for nostalgia">
-            <span className="text-[12px] text-muted-foreground">Y2K · CCD · Film</span>
+            <span className="text-[12px] text-muted-foreground">PowerShot · Cyber-shot · Exilim</span>
           </Row>
         </Section>
 

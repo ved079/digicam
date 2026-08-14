@@ -13,12 +13,15 @@ export default function Home() {
   const toast = useDigiCam((s) => s.toast);
   const selectedPhotoId = useDigiCam((s) => s.selectedPhotoId);
   const loadPhotos = useDigiCam((s) => s.loadPhotos);
+  const hydrate = useDigiCam((s) => s.hydrate);
 
-  // Load persisted photos on app mount so the recent-thumbnail on the
-  // camera screen and the gallery both work immediately after a reload.
+  // On mount: hydrate persisted settings (client-only) + load photos.
+  // Hydrating in an effect keeps the server/client initial render identical
+  // (avoids hydration mismatch from localStorage-only state).
   React.useEffect(() => {
+    hydrate();
     void loadPhotos();
-  }, [loadPhotos]);
+  }, [hydrate, loadPhotos]);
 
   // When a photo detail is open it behaves like a full-screen modal — hide
   // the tab bar so it doesn't clutter the viewer (native mobile pattern).

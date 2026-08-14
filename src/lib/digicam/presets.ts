@@ -1,8 +1,11 @@
-// DigiCam style presets — defines the look of each digicam emulation.
-// Each preset supplies a CSS filter string (for live preview) and the
-// parameters consumed by the canvas capture pipeline (effects.ts).
+// DigiCam camera-style presets — researched color-science profiles based
+// on real early-2000s digicam sensors (see RESEARCH.md). Each preset is a
+// distinct parameter set that feeds the SAME WebGL pipeline
+// (shaders.ts / gl-renderer.ts). The intensity slider scales the whole
+// look; presetToUniforms() blends from identity (intensity 0) to the
+// full camera signature (intensity 1).
 
-export type PresetId = "y2k" | "ccd" | "film" | "flash";
+export type PresetId = "powershot" | "cybershot" | "exilim" | "cell";
 
 export interface DigicamPreset {
   id: PresetId;
@@ -11,102 +14,171 @@ export interface DigicamPreset {
   swatch: string;
   /** one-line mood descriptor shown under the label when selected */
   tagline: string;
-  /** CSS filter applied to the live viewfinder <video> for real-time preview */
-  cssFilter: string;
-  /** color tint applied in canvas (rgb 0..1 multiplier per channel) */
+  /** which real camera this is modeled on (for the info readout) */
+  model: string;
+
+  // ---- Color science (researched, see RESEARCH.md §2) ----
+  /** RGB channel multipliers — the brand's white-balance/tint signature */
   tint: [number, number, number];
-  /** contrast multiplier centered at 0.5 (0.5 = none, >0.5 = more) */
-  contrast: number;
-  /** brightness multiplier (1 = none) */
-  brightness: number;
-  /** saturation multiplier (1 = none, <1 desaturates) */
+  /** white-balance temperature bias, -1 (cool) .. +1 (warm) */
+  warmth: number;
+  /** saturation multiplier (1 = unchanged) */
   saturation: number;
-  /** black lift — raises the floor, adds faded look (0..0.2) */
-  blackLift: number;
-  /** grain strength 0..1 */
+  /** contrast multiplier (1 = unchanged) */
+  contrast: number;
+  /** brightness multiplier (1 = unchanged) */
+  brightness: number;
+  /** shadow toe crush 0..1 — how hard shadows are crushed (limited DR) */
+  shadowCrush: number;
+  /** highlight clip threshold 0..1 — how hard highlights blow */
+  highlightClip: number;
+
+  // ---- CCD noise (see RESEARCH.md §1) ----
+  /** grain amount 0..1 */
   grain: number;
-  /** grain scale (pixel block size) — CCD uses blockier noise */
+  /** fixed-pattern-noise / grain block scale (px) — CCD blockiness */
   grainScale: number;
-  /** vignette strength 0..1 */
+  /** chroma noise in shadows 0..1 */
+  chromaNoise: number;
+
+  // ---- Optics / demosaic (§4) ----
+  /** chromatic aberration amount (UV offset) */
+  aberration: number;
+  /** AA-filter + demosaic softness 0..1 */
+  softness: number;
+  /** in-camera sharpening 0..1 (Sony high, Casio low) */
+  sharpen: number;
+
+  // ---- JPEG compression (§3) ----
+  /** shader-side blockiness approximation 0..1 */
+  blockiness: number;
+  /** capture-time JPEG quality 0..1 (real DCT + 4:2:0 re-encode) */
+  jpegQuality: number;
+
+  // ---- Vignette (lens character) ----
   vignette: number;
-  /** vignette radius (0.5 = tight, 1.0 = none) */
   vignetteRadius: number;
-  /** warm/cool color temp shift applied to highlights */
-  tempShift: number;
+
+  // ---- Flash (§6) — applied when flash toggle is on ----
+  /** RGB multiplier for the flash tint (flash ~5500-6000K, often cool) */
+  flashTint: [number, number, number];
+
+  // ---- Sensor resolution target (§"low native resolution") ----
+  /** max capture dimension — most digicams were 3-8MP; "Cell" is lower */
+  sensorMaxSize: number;
 }
 
 export const PRESETS: DigicamPreset[] = [
   {
-    id: "y2k",
-    label: "Y2K",
+    id: "powershot",
+    label: "PowerShot",
     swatch: "#E8B57A",
-    tagline: "warm · soft · nostalgic",
-    cssFilter:
-      "saturate(0.92) contrast(1.05) brightness(1.03) sepia(0.18) hue-rotate(-6deg)",
-    tint: [1.06, 1.0, 0.86],
-    contrast: 0.56,
-    brightness: 1.03,
-    saturation: 0.92,
-    blackLift: 0.03,
-    grain: 0.4,
-    grainScale: 1,
-    vignette: 0.32,
-    vignetteRadius: 0.72,
-    tempShift: 0.12,
-  },
-  {
-    id: "ccd",
-    label: "CCD",
-    swatch: "#A9C2D6",
-    tagline: "cool · crisp · sensor grain",
-    cssFilter:
-      "saturate(1.06) contrast(1.12) brightness(1.0) hue-rotate(4deg)",
-    tint: [0.92, 0.98, 1.08],
-    contrast: 0.62,
+    tagline: "Canon · warm · vivid",
+    model: "Canon PowerShot A620",
+    // Canon: amber WB, vivid reds/greens, moderate contrast, smooth HL
+    tint: [1.045, 1.0, 0.935],
+    warmth: 0.4,
+    saturation: 1.12,
+    contrast: 1.08,
     brightness: 1.0,
-    saturation: 1.06,
-    blackLift: 0.01,
-    grain: 0.55,
-    grainScale: 2,
-    vignette: 0.22,
-    vignetteRadius: 0.8,
-    tempShift: -0.1,
+    shadowCrush: 0.14,
+    highlightClip: 0.1,
+    grain: 0.34,
+    grainScale: 1.5,
+    chromaNoise: 0.16,
+    aberration: 0.0016,
+    softness: 0.34,
+    sharpen: 0.26,
+    blockiness: 0.2,
+    jpegQuality: 0.74,
+    vignette: 0.24,
+    vignetteRadius: 0.85,
+    flashTint: [1.0, 0.985, 0.955],
+    sensorMaxSize: 1600,
   },
   {
-    id: "film",
-    label: "Film",
-    swatch: "#C98B6A",
-    tagline: "faded · grainy · warm",
-    cssFilter:
-      "saturate(0.82) contrast(0.96) brightness(1.05) sepia(0.28)",
-    tint: [1.1, 1.02, 0.8],
-    contrast: 0.48,
-    brightness: 1.06,
-    saturation: 0.82,
-    blackLift: 0.08,
-    grain: 0.7,
-    grainScale: 1,
-    vignette: 0.5,
-    vignetteRadius: 0.66,
-    tempShift: 0.2,
+    id: "cybershot",
+    label: "Cyber-shot",
+    swatch: "#A9C2D6",
+    tagline: "Sony · cool · punchy",
+    model: "Sony Cyber-shot DSC-W55",
+    // Sony: cooler, very vivid blues, high contrast, crushed shadows,
+    // aggressive sharpening, more shadow chroma noise
+    tint: [0.955, 1.0, 1.055],
+    warmth: -0.32,
+    saturation: 1.2,
+    contrast: 1.18,
+    brightness: 1.0,
+    shadowCrush: 0.26,
+    highlightClip: 0.2,
+    grain: 0.46,
+    grainScale: 1.1,
+    chromaNoise: 0.38,
+    aberration: 0.001,
+    softness: 0.2,
+    sharpen: 0.46,
+    blockiness: 0.16,
+    jpegQuality: 0.72,
+    vignette: 0.2,
+    vignetteRadius: 0.9,
+    flashTint: [0.98, 1.0, 1.05],
+    sensorMaxSize: 1600,
   },
   {
-    id: "flash",
-    label: "Flash",
+    id: "exilim",
+    label: "Exilim",
     swatch: "#F2D4C7",
-    tagline: "bright · washed · direct",
-    cssFilter:
-      "saturate(0.9) contrast(1.08) brightness(1.18)",
-    tint: [1.05, 0.99, 0.92],
-    contrast: 0.58,
-    brightness: 1.16,
-    saturation: 0.9,
-    blackLift: 0.0,
+    tagline: "Casio · soft · pastel",
+    model: "Casio Exilim EX-Z75",
+    // Casio: low saturation/contrast (faded pastel), lifted toe, minimal
+    // sharpening, softest of the three, slight pink-warm tint
+    tint: [1.025, 1.0, 1.0],
+    warmth: 0.12,
+    saturation: 0.84,
+    contrast: 0.92,
+    brightness: 1.05,
+    shadowCrush: 0.1,
+    highlightClip: 0.06,
     grain: 0.3,
-    grainScale: 1,
-    vignette: 0.0,
-    vignetteRadius: 1.0,
-    tempShift: 0.08,
+    grainScale: 2.0,
+    chromaNoise: 0.2,
+    aberration: 0.0022,
+    softness: 0.56,
+    sharpen: 0.1,
+    blockiness: 0.26,
+    jpegQuality: 0.68,
+    vignette: 0.14,
+    vignetteRadius: 0.95,
+    flashTint: [1.025, 1.0, 0.98],
+    sensorMaxSize: 1400,
+  },
+  {
+    id: "cell",
+    label: "Cell",
+    swatch: "#B8C2A8",
+    tagline: "Cam-phone · green · noisy",
+    model: "Early camera phone (VGA-2MP)",
+    // Tiny sensor + plastic lens: green cast, crushed DR, heavy noise,
+    // heavy JPEG, lots of chroma noise, heavy vignette, low res
+    tint: [1.0, 1.025, 0.93],
+    warmth: 0.06,
+    saturation: 0.95,
+    contrast: 1.15,
+    brightness: 0.98,
+    shadowCrush: 0.36,
+    highlightClip: 0.26,
+    grain: 0.72,
+    grainScale: 2.5,
+    chromaNoise: 0.6,
+    aberration: 0.0042,
+    softness: 0.62,
+    sharpen: 0.3,
+    blockiness: 0.46,
+    jpegQuality: 0.56,
+    vignette: 0.42,
+    vignetteRadius: 0.74,
+    flashTint: [1.0, 0.98, 1.025],
+    sensorMaxSize: 1024,
   },
 ];
 
@@ -114,31 +186,93 @@ export function getPreset(id: PresetId): DigicamPreset {
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
 }
 
-/**
- * Build a live-preview CSS filter from a preset's numeric params and the
- * current intensity (0..1). At intensity 0 the filter is near-identity so
- * the user sees a clean feed; at 1 the full digicam look is applied.
- */
-export function buildCssFilter(preset: DigicamPreset, intensity: number): string {
-  const k = Math.max(0, Math.min(1, intensity));
-  const brightness = 1 + (preset.brightness - 1) * k;
-  const contrast = 1 + (preset.contrast - 0.5) * 2 * k;
-  const saturate = 1 + (preset.saturation - 1) * k;
-  // warm tint -> sepia + slight hue; cool tint -> hue-rotate toward blue
-  const warm = Math.max(0, preset.tempShift);
-  const cool = Math.max(0, -preset.tempShift);
-  const sepia = warm * 0.9 * k;
-  const hue = warm * -6 * k + cool * 6 * k;
-  const blur = k > 0.01 ? 0.4 * k : 0; // subtle softness
-  return [
-    `saturate(${saturate.toFixed(3)})`,
-    `contrast(${contrast.toFixed(3)})`,
-    `brightness(${brightness.toFixed(3)})`,
-    sepia > 0.001 ? `sepia(${sepia.toFixed(3)})` : "",
-    `hue-rotate(${hue.toFixed(2)}deg)`,
-    blur > 0 ? `blur(${blur.toFixed(2)}px)` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+// ---------------------------------------------------------------------------
+// Pipeline uniforms — the data fed into the WebGL fragment shader per frame.
+// ---------------------------------------------------------------------------
+
+export interface PipelineUniforms {
+  uIntensity: number;
+  uTime: number;
+  uISOBoost: number; // 0..1 — global noise boost for low-light scenes
+  uTint: [number, number, number];
+  uWarmth: number;
+  uSaturation: number;
+  uContrast: number;
+  uBrightness: number;
+  uShadowCrush: number;
+  uHighlightClip: number;
+  uGrainAmount: number;
+  uGrainScale: number;
+  uChromaNoise: number;
+  uVignette: number;
+  uVignetteRadius: number;
+  uAberration: number;
+  uSoftness: number;
+  uBlockiness: number;
+  uSharpen: number;
+  uFlashOn: number;
+  uFlashTint: [number, number, number];
+  uMirror: number;
 }
 
+/**
+ * Build the shader uniform set for a given preset + intensity + flash.
+ * At intensity 0 the look is near-identity (clean feed); at 1 the full
+ * camera signature is applied. The blend is perceptually linear:
+ * color-science grades blend from neutral, while grain/blockiness/CA
+ * scale directly (they should be invisible at subtle).
+ */
+export function presetToUniforms(
+  preset: DigicamPreset,
+  intensity: number,
+  opts: {
+    time: number;
+    isoBoost?: number;
+    flashOn: boolean;
+    mirror?: boolean;
+  },
+): PipelineUniforms {
+  const k = clamp(intensity, 0, 1);
+  const iso = clamp(opts.isoBoost ?? 0.3, 0, 1);
+
+  // Color science: blend tint/warmth/sat/contrast/brightness from neutral
+  // toward the preset's full signature using k.
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const lerpArr = (a: [number, number, number], b: [number, number, number], t: number): [number, number, number] =>
+    [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+
+  return {
+    uIntensity: k,
+    uTime: opts.time,
+    uISOBoost: iso,
+    // tint blends from [1,1,1] toward the preset tint
+    uTint: lerpArr([1, 1, 1], preset.tint, k),
+    uWarmth: preset.warmth * k,
+    uSaturation: lerp(1, preset.saturation, k),
+    uContrast: lerp(1, preset.contrast, k),
+    uBrightness: lerp(1, preset.brightness, k),
+    // DR crush/clip scale with k
+    uShadowCrush: preset.shadowCrush * k,
+    uHighlightClip: preset.highlightClip * k,
+    // noise scales with k AND iso (low light boosts noise)
+    uGrainAmount: preset.grain * k * (0.6 + iso * 0.8),
+    uGrainScale: preset.grainScale,
+    uChromaNoise: preset.chromaNoise * k * (0.6 + iso * 0.9),
+    // optics
+    uAberration: preset.aberration * k,
+    uSoftness: preset.softness * k,
+    uBlockiness: preset.blockiness * k,
+    uSharpen: preset.sharpen * (0.4 + k * 0.6),
+    // vignette
+    uVignette: preset.vignette * k,
+    uVignetteRadius: preset.vignetteRadius,
+    // flash
+    uFlashOn: opts.flashOn ? 1 : 0,
+    uFlashTint: preset.flashTint,
+    uMirror: opts.mirror ? 1 : 0,
+  };
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, v));
+}

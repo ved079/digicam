@@ -13,8 +13,10 @@ import {
 } from "lucide-react";
 import { useDigiCam } from "@/lib/digicam/store";
 import { useCamera } from "@/lib/digicam/use-camera";
-import { buildCssFilter, getPreset } from "@/lib/digicam/presets";
+import { getPreset } from "@/lib/digicam/presets";
 import { captureFrame, stampTimestamp } from "@/lib/digicam/effects";
+import { useViewfinder } from "@/lib/digicam/use-viewfinder";
+import { createCheapMicStream } from "@/lib/digicam/audio-effects";
 import { savePhoto, type PhotoMeta } from "@/lib/digicam/db";
 import { DEMO_SCENES, loadDemoImage } from "@/lib/digicam/demo";
 import { cn } from "@/lib/utils";
@@ -63,7 +65,6 @@ export function CameraScreen() {
 
   const presetDef = getPreset(preset);
   const intensity = settings.intensity;
-  const filterCss = buildCssFilter(presetDef, intensity);
 
   // Demo mode — activates when no webcam is available so the full pipeline
   // (live preview + capture + gallery) can still be experienced.
@@ -80,6 +81,34 @@ export function CameraScreen() {
     };
   }, [demoSceneIndex]);
 
+  // WebGL viewfinder — renders the processed feed onto a visible canvas.
+  const viewfinderCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const sourceRef = React.useRef<HTMLVideoElement | HTMLImageElement | null>(
+    null,
+  );
+
+  // Keep sourceRef pointing at the active source (video for live, img for demo).
+  React.useEffect(() => {
+    sourceRef.current = demoMode ? demoImg : videoRef.current;
+  });
+
+  const mirror = facingMode === "user" && !demoMode;
+
+  const { failed: glFailed, fps } = useViewfinder(
+    sourceRef,
+    viewfinderCanvasRef,
+    {
+      preset,
+      intensity,
+      flashOn: flash,
+      mirror,
+      // estimate ISO boost from intensity (more intensity ~ more degraded ~
+      // we also nudge it up in low-light; here we use a fixed sensible default
+      // since true scene-luma analysis would stall the GPU pipeline).
+      isoBoost: 0.3 + intensity * 0.35,
+    },
+  );
+
   const [flashOverlay, setFlashOverlay] = React.useState(false);
   const [countdown, setCountdown] = React.useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
@@ -88,12 +117,14 @@ export function CameraScreen() {
   // latest recent photo thumbnail
   const recent = photos[0];
 
-  // MediaRecorder bits
+  // MediaRecorder + cheap-mic audio graph refs
   const recorderRef = React.useRef<MediaRecorder | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
   const recordTickRef = React.useRef<number | null>(null);
+  const micGraphRef = React.useRef<ReturnType<typeof createCheapMicStream> | null>(null);
+  const recordStreamRef = React.useRef<MediaStream | null>(null);
 
-  // Clean up recorder/timers on unmount
+  // Clean up recorder/timers/audio on unmount
   React.useEffect(() => {
     return () => {
       if (recordTickRef.current) window.clearInterval(recordTickRef.current);
@@ -103,6 +134,10 @@ export function CameraScreen() {
         } catch {
           /* noop */
         }
+      }
+      if (micGraphRef.current) micGraphRef.current.cleanup();
+      if (recordStreamRef.current) {
+        recordStreamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
   }, []);
@@ -124,8 +159,8 @@ export function CameraScreen() {
     try {
       const { blob, width, height } = await captureFrame(source, presetDef, {
         intensity,
-        maxSize: settings.photoQuality === "high" ? 2048 : 1600,
-        quality: settings.photoQuality === "high" ? 0.82 : 0.74,
+        flashOn: flash,
+        mirror,
       });
 
       const finalBlob = settings.timestamp
@@ -162,7 +197,8 @@ export function CameraScreen() {
     demoImg,
     presetDef,
     intensity,
-    settings.photoQuality,
+    flash,
+    mirror,
     settings.timestamp,
     settings.saveLocation,
     preset,
@@ -197,23 +233,52 @@ export function CameraScreen() {
     }
   };
 
+  // ---- Video recording via the processed viewfinder canvas ----
+  // The recorded video is authentically processed because we record the
+  // WebGL canvas output (captureStream), not the raw camera stream.
+  // Audio is routed through the cheap-mic Web Audio chain for the
+  // narrow-band, hissy built-in-mic character of early digicams.
   const handleVideoToggle = () => {
-    const stream = getStream();
-    if (!stream) return;
     if (recording) {
-      // stop
       if (recorderRef.current && recorderRef.current.state !== "inactive") {
         recorderRef.current.stop();
       }
       return;
     }
-    if (!("MediaRecorder" in window)) {
+    const canvas = viewfinderCanvasRef.current;
+    if (!canvas || !("MediaRecorder" in window)) {
       showToast("Video recording not supported");
       return;
     }
+    if (typeof canvas.captureStream !== "function") {
+      showToast("captureStream unsupported");
+      return;
+    }
     try {
+      // Processed video track from the canvas (30fps target).
+      const videoStream = canvas.captureStream(30);
+
+      // Processed audio track — route mic through the cheap-mic chain.
+      const camStream = getStream();
+      let combined = videoStream;
+      if (camStream) {
+        const micGraph = createCheapMicStream(camStream, {
+          lowFreq: 250,
+          highFreq: 5500,
+          hiss: 0.06,
+          distortion: 0.12,
+        });
+        if (micGraph) {
+          micGraphRef.current = micGraph;
+          combined = new MediaStream();
+          videoStream.getVideoTracks().forEach((t) => combined.addTrack(t));
+          micGraph.stream.getAudioTracks().forEach((t) => combined.addTrack(t));
+        }
+      }
+      recordStreamRef.current = videoStream;
+
       const mime = pickMime();
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const rec = new MediaRecorder(combined, mime ? { mimeType: mime } : undefined);
       chunksRef.current = [];
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -227,8 +292,8 @@ export function CameraScreen() {
           id: uid(),
           blob,
           url: URL.createObjectURL(blob),
-          width: videoRef.current?.videoWidth || 640,
-          height: videoRef.current?.videoHeight || 480,
+          width: canvas.width,
+          height: canvas.height,
           createdAt: Date.now(),
           preset,
           intensity,
@@ -241,6 +306,11 @@ export function CameraScreen() {
         if (recordTickRef.current) {
           window.clearInterval(recordTickRef.current);
           recordTickRef.current = null;
+        }
+        // tear down audio graph
+        if (micGraphRef.current) {
+          micGraphRef.current.cleanup();
+          micGraphRef.current = null;
         }
         if (settings.saveLocation === "device") {
           downloadBlob(meta.blob, `digicam_${meta.id}.webm`);
@@ -265,6 +335,18 @@ export function CameraScreen() {
     selectPhoto(recent.id);
     setTab("gallery");
   };
+
+  // CSS-filter fallback string (only used if WebGL init failed).
+  const fallbackCss = React.useMemo(() => {
+    const p = presetDef;
+    const k = intensity;
+    return [
+      `saturate(${(1 + (p.saturation - 1) * k).toFixed(3)})`,
+      `contrast(${(1 + (p.contrast - 1) * k).toFixed(3)})`,
+      `brightness(${(1 + (p.brightness - 1) * k).toFixed(3)})`,
+      `sepia(${(Math.max(0, p.warmth) * 0.9 * k).toFixed(3)})`,
+    ].join(" ");
+  }, [presetDef, intensity]);
 
   return (
     <div className="relative flex h-full w-full flex-col bg-[#0a0908]">
@@ -309,7 +391,8 @@ export function CameraScreen() {
 
       {/* === Viewfinder === */}
       <div className="relative flex-1 overflow-hidden">
-        {/* live video feed */}
+        {/* hidden source video — the GL renderer reads from this element.
+            When WebGL fails this same element becomes the visible fallback. */}
         <video
           ref={videoRef}
           playsInline
@@ -317,19 +400,26 @@ export function CameraScreen() {
           autoPlay
           className="absolute inset-0 h-full w-full object-cover"
           style={{
-            filter: filterCss,
-            transform: facingMode === "user" ? "scaleX(-1)" : undefined,
-            opacity: demoMode ? 0 : 1,
+            opacity: glFailed ? 1 : 0,
+            transform: mirror ? "scaleX(-1)" : undefined,
+            filter: glFailed ? fallbackCss : undefined,
+            pointerEvents: "none",
           }}
         />
 
-        {/* demo scene viewfinder (no camera available) */}
-        {demoMode && (
+        {/* WebGL viewfinder canvas — the processed live feed */}
+        {!glFailed && (
+          <canvas
+            ref={viewfinderCanvasRef}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        )}
+
+        {/* When WebGL failed, show the CSS-filtered video directly */}
+        {glFailed && demoMode && (
           <button
             type="button"
-            onClick={() =>
-              setDemoSceneIndex((i) => (i + 1) % DEMO_SCENES.length)
-            }
+            onClick={() => setDemoSceneIndex((i) => (i + 1) % DEMO_SCENES.length)}
             aria-label="Change demo scene"
             className="absolute inset-0 h-full w-full cursor-pointer"
           >
@@ -337,30 +427,10 @@ export function CameraScreen() {
               src={DEMO_SCENES[demoSceneIndex]}
               alt="Demo scene preview"
               className="h-full w-full object-cover"
-              style={{ filter: filterCss }}
+              style={{ filter: fallbackCss }}
             />
           </button>
         )}
-
-        {/* live vignette + grain overlays for real-time preview feel */}
-        {intensity > 0.02 && presetDef.vignette > 0 && (
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background: `radial-gradient(120% 120% at 50% 50%, transparent ${presetDef.vignetteRadius * 60}%, rgba(0,0,0,${presetDef.vignette * intensity * 0.7}) 100%)`,
-            }}
-          />
-        )}
-        {intensity > 0.02 && presetDef.grain > 0.15 && (
-          <div
-            className="pointer-events-none absolute inset-0 grain-overlay opacity-25 mix-blend-overlay"
-            style={{ opacity: presetDef.grain * intensity * 0.4 }}
-          />
-        )}
-
-        {/* composition grid lines */}
-        {settings.gridLines && <GridLines />}
-
         {/* loading state */}
         {status === "loading" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0a0908] px-8 text-center">
@@ -370,15 +440,22 @@ export function CameraScreen() {
         )}
 
         {/* demo-mode banner */}
-        {demoMode && (
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-4"
+        {demoMode && (status === "ready" || demoMode) && (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-4"
             style={{ paddingTop: "max(76px, env(safe-area-inset-top, 0px) + 64px)" }}
           >
             <div className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-black/55 py-1.5 pl-3 pr-1.5 text-white backdrop-blur">
-              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+              <button
+                type="button"
+                onClick={() =>
+                  setDemoSceneIndex((i) => (i + 1) % DEMO_SCENES.length)
+                }
+                className="flex items-center gap-1.5 text-[11px] font-medium"
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
-                Demo · tap scene to swap
-              </span>
+                Demo · tap scene
+              </button>
               <button
                 onClick={() => restartCamera()}
                 className="tap-scale rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-medium"
@@ -388,6 +465,9 @@ export function CameraScreen() {
             </div>
           </div>
         )}
+
+        {/* composition grid lines */}
+        {settings.gridLines && <GridLines />}
 
         {/* shutter flash overlay */}
         {flashOverlay && (
@@ -409,6 +489,7 @@ export function CameraScreen() {
         {/* info readout overlay (digicam data detail) */}
         {showInfo && (status === "ready" || demoMode) && (
           <div className="animate-fade-in pointer-events-none absolute left-4 top-16 flex flex-col gap-0.5 rounded-lg bg-black/45 px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-200/90 backdrop-blur">
+            <span>CAM · {presetDef.model}</span>
             <span>PRESET · {presetDef.label.toUpperCase()}</span>
             <span>INTENSITY · {Math.round(intensity * 100)}%</span>
             <span>
@@ -418,7 +499,12 @@ export function CameraScreen() {
                 minute: "2-digit",
               })}
             </span>
-            <span className="text-amber-200/50">{facingMode === "user" ? "FRONT" : "REAR"} CAM</span>
+            <span className="text-amber-200/50">
+              {facingMode === "user" ? "FRONT" : "REAR"} CAM · {fps} FPS
+            </span>
+            <span className="text-amber-200/40">
+              {glFailed ? "CPU FALLBACK" : "WEBGL PIPELINE"}
+            </span>
           </div>
         )}
       </div>
@@ -574,6 +660,8 @@ function GridLines() {
 function pickMime(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
   const types = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
