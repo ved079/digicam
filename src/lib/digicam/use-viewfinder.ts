@@ -18,7 +18,6 @@ import type { PresetId } from "./presets";
 export interface ViewfinderParams {
   preset: PresetId;
   intensity: number;
-  flashOn: boolean;
   mirror: boolean;
   isoBoost: number;
 }
@@ -108,11 +107,15 @@ export function useViewfinder(
         const p = paramsRef.current;
         const presetDef = getPreset(p.preset);
         renderer.setSource(src);
+        // Live preview NEVER applies the flash shader pass — flash mode is
+        // just an armed state. The flash effect fires only at capture time
+        // (see captureFrame in effects.ts, gated by the shutter code path),
+        // matching how a real xenon flash only fires for the captured frame.
         renderer.setUniforms(
           presetToUniforms(presetDef, p.intensity, {
             time: (performance.now() - start) / 1000,
             isoBoost: p.isoBoost,
-            flashOn: p.flashOn,
+            flashOn: false,
             mirror: p.mirror,
           }),
         );

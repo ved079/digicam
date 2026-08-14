@@ -199,8 +199,9 @@
 
 /* Keyframes */
 @keyframes shutter-flash {
+  /* Xenon-like burst: near-instant bright peak, quick falloff. ~120ms total. */
   0% { opacity: 0; }
-  15% { opacity: 0.9; }
+  8% { opacity: 0.95; }
   100% { opacity: 0; }
 }
 @keyframes rec-blink {
@@ -221,7 +222,7 @@
 }
 
 .animate-shutter-flash {
-  animation: shutter-flash 320ms ease-out;
+  animation: shutter-flash 140ms ease-out;
 }
 .animate-rec-blink {
   animation: rec-blink 1s ease-in-out infinite;

@@ -100,12 +100,15 @@ export function CameraScreen() {
     {
       preset,
       intensity,
-      flashOn: flash,
       mirror,
       // estimate ISO boost from intensity (more intensity ~ more degraded ~
       // we also nudge it up in low-light; here we use a fixed sensible default
       // since true scene-luma analysis would stall the GPU pipeline).
       isoBoost: 0.3 + intensity * 0.35,
+      // NOTE: flashOn is intentionally NOT passed here. The live preview must
+      // never apply the flash shader pass — flash mode is just an armed state.
+      // The flash effect fires only at capture (captureFrame gets flashOn),
+      // and a one-shot UI burst overlay plays at the shutter moment.
     },
   );
 
@@ -180,9 +183,15 @@ export function CameraScreen() {
     };
   }, []);
 
-  const doFlash = () => {
+  // One-shot UI flash-burst overlay. Fires ONLY at the shutter moment AND only
+  // when flash mode is armed — matching how a real xenon flash reads visually
+  // (near-instant bright peak, quick falloff). This is a UI-layer animation,
+  // separate from the shader pipeline; it does NOT tint the live preview
+  // before or after, and does NOT persist into subsequent frames.
+  const doFlash = (flashArmed: boolean) => {
+    if (!flashArmed) return;
     setFlashOverlay(true);
-    window.setTimeout(() => setFlashOverlay(false), 320);
+    window.setTimeout(() => setFlashOverlay(false), 140);
   };
 
   const capturePhoto = React.useCallback(async () => {
@@ -198,7 +207,9 @@ export function CameraScreen() {
     if (flashAvailable && flash && !torchWasOn) {
       await setTorch(true);
     }
-    doFlash();
+    // One-shot UI burst + the flash color-grading baked into THIS single
+    // captured frame only. Both are gated on `flash` (the armed toggle).
+    doFlash(flash);
 
     try {
       const { blob, width, height } = await captureFrame(source, presetDef, {
@@ -524,9 +535,20 @@ export function CameraScreen() {
         {/* composition grid lines */}
         {settings.gridLines && <GridLines />}
 
-        {/* shutter flash overlay */}
+        {/* One-shot UI flash-burst overlay — fires only at the shutter moment
+            when flash is armed. A brief bright warm-white bloom that fades in
+            ~140ms, matching a real xenon flash. This is a UI-layer animation,
+            NOT part of the shader pipeline — it does not tint the live preview
+            before/after, and the actual flash color-grading is baked only into
+            the single captured frame via captureFrame(flashOn: flash). */}
         {flashOverlay && (
-          <div className="animate-shutter-flash pointer-events-none absolute inset-0 bg-white" />
+          <div
+            className="animate-shutter-flash pointer-events-none absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(120% 120% at 50% 45%, rgba(255,250,235,0.98) 0%, rgba(255,244,224,0.92) 45%, rgba(255,236,210,0.7) 100%)",
+            }}
+          />
         )}
 
         {/* countdown */}
