@@ -1,0 +1,31 @@
+{
+  "_comment": "Approved baseline of the PowerShot preset, captured before the Task A refinement pass. Used as an explicit, diffable fallback independent of git history. Regenerate via: import the preset object from presets.ts and JSON.stringify it.",
+  "_sourceCommit": "see git log for the 'approved baseline' commit",
+  "_capturedAt": "2026-08-15",
+  "preset": {
+    "id": "powershot",
+    "label": "PowerShot",
+    "swatch": "#E8B57A",
+    "tagline": "Canon · warm · vivid",
+    "model": "Canon PowerShot A620",
+    "tint": [1.045, 1.0, 0.935],
+    "warmth": 0.4,
+    "saturation": 1.12,
+    "contrast": 1.08,
+    "brightness": 1.0,
+    "shadowCrush": 0.14,
+    "highlightClip": 0.1,
+    "grain": 0.34,
+    "grainScale": 1.5,
+    "chromaNoise": 0.16,
+    "aberration": 0.0016,
+    "softness": 0.34,
+    "sharpen": 0.26,
+    "blockiness": 0.2,
+    "jpegQuality": 0.74,
+    "vignette": 0.24,
+    "vignetteRadius": 0.85,
+    "flashTint": [1.0, 0.985, 0.955],
+    "sensorMaxSize": 1600
+  }
+}

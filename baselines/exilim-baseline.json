@@ -1,0 +1,31 @@
+{
+  "_comment": "Approved baseline of the Exilim preset, captured before the Task A refinement pass. Used as an explicit, diffable fallback independent of git history. Regenerate via: import the preset object from presets.ts and JSON.stringify it.",
+  "_sourceCommit": "see git log for the 'approved baseline' commit",
+  "_capturedAt": "2026-08-15",
+  "preset": {
+    "id": "exilim",
+    "label": "Exilim",
+    "swatch": "#F2D4C7",
+    "tagline": "Casio · soft · pastel",
+    "model": "Casio Exilim EX-Z75",
+    "tint": [1.025, 1.0, 1.0],
+    "warmth": 0.12,
+    "saturation": 0.84,
+    "contrast": 0.92,
+    "brightness": 1.05,
+    "shadowCrush": 0.1,
+    "highlightClip": 0.06,
+    "grain": 0.3,
+    "grainScale": 2.0,
+    "chromaNoise": 0.2,
+    "aberration": 0.0022,
+    "softness": 0.56,
+    "sharpen": 0.1,
+    "blockiness": 0.26,
+    "jpegQuality": 0.68,
+    "vignette": 0.14,
+    "vignetteRadius": 0.95,
+    "flashTint": [1.025, 1.0, 0.98],
+    "sensorMaxSize": 1400
+  }
+}
