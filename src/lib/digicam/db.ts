@@ -15,7 +15,7 @@ export interface PhotoMeta {
   preset: PresetId;
   intensity: number;
   kind: "photo" | "video";
-  /** for video captures, blob is webm */
+  /** for video captures; the blob's actual container (webm/mp4/mov) */
   durationMs?: number;
 }
 

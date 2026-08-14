@@ -338,8 +338,11 @@ export function CameraScreen() {
       rec.onstop = async () => {
         const start = recordStart;
         const durationMs = Math.max(0, Date.now() - start);
-        const type = rec.mimeType || "video/webm";
+        // Use the recorder's actual output MIME — reflects what was really
+        // encoded (MP4 on iOS Safari, WebM on Chrome/Android/Firefox).
+        const type = rec.mimeType || mime || "video/webm";
         const blob = new Blob(chunksRef.current, { type });
+        const ext = videoExtensionForMime(type);
         const meta: PhotoMeta = {
           id: uid(),
           blob,
@@ -365,7 +368,7 @@ export function CameraScreen() {
           micGraphRef.current = null;
         }
         if (settings.saveLocation === "device") {
-          downloadBlob(meta.blob, `digicam_${meta.id}.webm`);
+          downloadBlob(meta.blob, `digicam_${meta.id}.${ext}`);
         }
         showToast("Video saved");
       };
@@ -755,13 +758,21 @@ function GridLines() {
 
 function pickMime(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
+  // Priority order (Task C): prefer MP4/H.264 where supported (iOS Safari
+  // 14.5–18.x records MP4/H.264+AAC natively), then fall back to WebM
+  // (Chrome/Android/Firefox — VP8/VP9+Opus). We test each via isTypeSupported()
+  // and use the first match rather than hardcoding a single mimeType.
   const types = [
+    // MP4 / H.264 — iOS Safari native, best cross-device compatibility
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2", // H.264 Baseline 3.0 + AAC-LC
+    "video/mp4;codecs=avc1",
+    "video/mp4",
+    // WebM — Chrome/Android/Firefox
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
-    "video/mp4",
   ];
   for (const t of types) {
     try {
@@ -771,6 +782,22 @@ function pickMime(): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Map a recorded video MIME type to the correct file extension. Critical
+ * for cross-device playback — labeling a WebM file `.mp4` causes broken
+ * playback in apps/players that key off the extension. The actual container
+ * inside the blob must match the extension we give it.
+ */
+function videoExtensionForMime(mime: string | undefined): string {
+  if (!mime) return "webm"; // MediaRecorder default when no mimeType specified
+  const m = mime.toLowerCase();
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("quicktime") || m.includes("mov")) return "mov";
+  // Unknown — default to webm (most common MediaRecorder output)
+  return "webm";
 }
 
 function downloadBlob(blob: Blob, name: string) {

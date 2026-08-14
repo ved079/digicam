@@ -229,7 +229,7 @@ function PhotoDetail({
         await navigator.share({
           title: "DigiCam photo",
           files: [
-            new File([current.blob], `digicam_${current.id}.${current.kind === "video" ? "webm" : "jpg"}`, {
+            new File([current.blob], `digicam_${current.id}.${fileExtForMeta(current)}`, {
               type: current.blob.type,
             }),
           ],
@@ -431,9 +431,24 @@ function downloadBlob(blob: Blob, meta: PhotoMeta) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `digicam_${meta.id}.${meta.kind === "video" ? "webm" : "jpg"}`;
+  a.download = `digicam_${meta.id}.${fileExtForMeta(meta)}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Derive the correct file extension for a saved photo/video from its blob's
+ * actual MIME type. Critical for cross-device playback — a WebM file labeled
+ * `.mp4` won't play in players that key off the extension. Photos are always
+ * JPEG (the pipeline encodes to JPEG); videos map from the recorded container.
+ */
+function fileExtForMeta(meta: PhotoMeta): string {
+  if (meta.kind === "photo") return "jpg";
+  const t = (meta.blob.type || "").toLowerCase();
+  if (t.includes("mp4")) return "mp4";
+  if (t.includes("quicktime") || t.includes("mov")) return "mov";
+  // WebM is the MediaRecorder default on Chrome/Android/Firefox
+  return "webm";
 }
