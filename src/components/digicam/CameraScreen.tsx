@@ -58,7 +58,7 @@ export function CameraScreen() {
     showToast,
   } = useDigiCam();
 
-  const { videoRef, status, error, getStream, start: restartCamera } = useCamera({
+  const { videoRef, status, error, getStream, start: restartCamera, torchSupport, torchOn, setTorch } = useCamera({
     facingMode,
     enabled: true,
   });
@@ -109,6 +109,44 @@ export function CameraScreen() {
     },
   );
 
+  // ---- Hardware torch (real flash) integration (Task B) ----
+  // Torch is a continuous state on the camera track, not a one-shot
+  // flash-at-capture API. We keep the UI `flash` toggle as the user intent,
+  // and sync the hardware torch to it. On capture we briefly pulse the torch
+  // if it isn't already on. Always turned off on view exit / app background.
+  const flashAvailable = torchSupport === "supported" && !demoMode;
+  const flashDisabled = !demoMode && torchSupport === "unsupported";
+
+  // Sync hardware torch to the UI flash state whenever it changes (and on
+  // torch-support becoming known). No-op when unsupported.
+  React.useEffect(() => {
+    if (torchSupport !== "supported") return;
+    void setTorch(flash);
+  }, [flash, torchSupport, setTorch]);
+
+  // Turn torch off when the camera view is left (tab switch) or the app is
+  // backgrounded (battery/UX safety). The useCamera hook also turns it off
+  // when stopping the stream on unmount; this covers the backgrounded case.
+  React.useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" && torchSupport === "supported") {
+        void setTorch(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [torchSupport, setTorch]);
+
+  // Handle the flash toggle button: if unsupported, show an explanation toast
+  // only when tapped (non-intrusive); if supported, toggle normally.
+  const handleFlashToggle = React.useCallback(() => {
+    if (flashDisabled) {
+      showToast("Flash isn't supported in-browser on this device");
+      return;
+    }
+    toggleFlash();
+  }, [flashDisabled, toggleFlash, showToast]);
+
   const [flashOverlay, setFlashOverlay] = React.useState(false);
   const [countdown, setCountdown] = React.useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
@@ -154,6 +192,12 @@ export function CameraScreen() {
       : videoRef.current;
     if (!source) return;
     if (!demoMode && status !== "ready") return;
+    // Fire the real hardware torch for the duration of the capture if flash
+    // is enabled and the device supports it (Task B). Pulse on if off.
+    const torchWasOn = torchOn;
+    if (flashAvailable && flash && !torchWasOn) {
+      await setTorch(true);
+    }
     doFlash();
 
     try {
@@ -189,6 +233,11 @@ export function CameraScreen() {
     } catch (e) {
       console.error(e);
       showToast("Capture failed");
+    } finally {
+      // Restore the torch to its prior state (off if we pulsed it on).
+      if (flashAvailable && flash && !torchWasOn) {
+        void setTorch(false);
+      }
     }
   }, [
     videoRef,
@@ -199,6 +248,9 @@ export function CameraScreen() {
     intensity,
     flash,
     mirror,
+    flashAvailable,
+    torchOn,
+    setTorch,
     settings.timestamp,
     settings.saveLocation,
     preset,
@@ -355,13 +407,13 @@ export function CameraScreen() {
         className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-5"
         style={{ paddingTop: "max(18px, env(safe-area-inset-top, 0px))" }}
       >
-        <TopIconButton
-          label="Flash"
-          onClick={toggleFlash}
-          active={flash}
-        >
-          {flash ? <Zap size={20} /> : <ZapOff size={20} />}
-        </TopIconButton>
+        <FlashButton
+          flash={flash}
+          flashAvailable={flashAvailable}
+          flashDisabled={flashDisabled}
+          torchSupport={torchSupport}
+          onClick={handleFlashToggle}
+        />
 
         <div className="flex items-center gap-2">
           {recording && (
@@ -616,6 +668,50 @@ export function CameraScreen() {
         </button>
       </div>
     </div>
+  );
+}
+
+function FlashButton({
+  flash,
+  flashAvailable,
+  flashDisabled,
+  torchSupport,
+  onClick,
+}: {
+  flash: boolean;
+  flashAvailable: boolean;
+  flashDisabled: boolean;
+  torchSupport: "checking" | "supported" | "unsupported";
+  onClick: () => void;
+}) {
+  // In demo mode the flash toggle drives the shader flash simulation (still
+  // useful for previewing the look), so it remains interactive there.
+  return (
+    <button
+      onClick={onClick}
+      aria-label="Flash"
+      className={cn(
+        "tap-scale relative flex h-11 w-11 items-center justify-center rounded-full backdrop-blur transition-colors",
+        flash && flashAvailable
+          ? "bg-accent text-accent-foreground"
+          : flash && !flashAvailable
+            ? "bg-accent/60 text-accent-foreground" // demo-mode shader flash
+            : flashDisabled
+              ? "bg-black/35 text-white/30" // unsupported — visibly dimmed
+              : "bg-black/35 text-white/85",
+      )}
+    >
+      {flash ? <Zap size={20} /> : <ZapOff size={20} />}
+      {torchSupport === "checking" && (
+        <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 animate-pulse rounded-full bg-white/60" />
+      )}
+      {/* small slash indicator when hardware flash is unsupported (non-demo) */}
+      {flashDisabled && (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span className="h-px w-7 rotate-45 bg-white/40" />
+        </span>
+      )}
+    </button>
   );
 }
 
