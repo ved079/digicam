@@ -7,6 +7,11 @@ export const DEMO_SCENES = [
   "/demo/scene-1.png",
   "/demo/scene-2.png",
   "/demo/scene-3.png",
+  // Task A reference test scenes (daylight / indoor / flash-lowlight).
+  // Used for side-by-side comparison against real-camera references.
+  "/demo/test-daylight.png",
+  "/demo/test-indoor.png",
+  "/demo/test-flash.png",
 ];
 
 const imageCache = new Map<string, HTMLImageElement>();

@@ -75,25 +75,40 @@ export const PRESETS: DigicamPreset[] = [
     swatch: "#E8B57A",
     tagline: "Canon · warm · vivid",
     model: "Canon PowerShot A620",
-    // Canon: amber WB, vivid reds/greens, moderate contrast, smooth HL
-    tint: [1.045, 1.0, 0.935],
-    warmth: 0.4,
+    // Canon PowerShot A620/A640 (2006-2007) color science, refined per
+    // Task A gap analysis vs real reference photos:
+    //  - warmth reduced 0.4→0.28 (real Canon WB is warm-biased but the indoor
+    //    output read as excessively orange/syrupy vs Canon's gentler gold).
+    //  - tint R pulled back 1.045→1.032 (greens were shifting olive).
+    //  - sharpen 0.26→0.16 (A640 was 'reasonably sharp, NOT oversharpened';
+    //    the halo on hair/straps was too modern/digital).
+    //  - highlightClip 0.1→0.06 (Canon famous for creamy highlight rolloff,
+    //    not hard clipping; sky was transitioning too abruptly).
+    //  - shadowCrush 0.14→0.09 (shadows under chin/hair too muddy; Canon
+    //    retained better shadow detail / lifted toe).
+    //  - grain 0.34→0.40 + chromaNoise 0.16→0.12 (indoor scene was too
+    //    clean/plastic for ISO 80-100 CCD; real Canon shows fine luminance
+    //    grain but LOW chroma noise — luminance up, chroma down).
+    //  - flashTint nudged warmer (1.0,0.985,0.955)→(1.0,0.99,0.962) so the
+    //    flash scene's background isn't clipped to pure sensor-floor black.
+    tint: [1.032, 1.0, 0.935],
+    warmth: 0.28,
     saturation: 1.12,
     contrast: 1.08,
     brightness: 1.0,
-    shadowCrush: 0.14,
-    highlightClip: 0.1,
-    grain: 0.34,
+    shadowCrush: 0.09,
+    highlightClip: 0.06,
+    grain: 0.4,
     grainScale: 1.5,
-    chromaNoise: 0.16,
+    chromaNoise: 0.12,
     aberration: 0.0016,
     softness: 0.34,
-    sharpen: 0.26,
+    sharpen: 0.16,
     blockiness: 0.2,
     jpegQuality: 0.74,
     vignette: 0.24,
     vignetteRadius: 0.85,
-    flashTint: [1.0, 0.985, 0.955],
+    flashTint: [1.0, 0.99, 0.962],
     sensorMaxSize: 1600,
   },
   {
@@ -130,25 +145,41 @@ export const PRESETS: DigicamPreset[] = [
     swatch: "#F2D4C7",
     tagline: "Casio · soft · pastel",
     model: "Casio Exilim EX-Z75",
-    // Casio: low saturation/contrast (faded pastel), lifted toe, minimal
-    // sharpening, softest of the three, slight pink-warm tint
+    // Casio Exilim EX-Z75 (2007) color science, refined per Task A gap
+    // analysis vs real reference photos. Real Exilim: 'soft and a little
+    // noisy even at ISO 100', mediocre DR, weak/soft lens, muted color.
+    //  - saturation 0.84→0.76 (real Exilim is slightly UNDER-saturated/
+    //    muted; daylight output was too rich/modern).
+    //  - shadowCrush 0.1→0.18 (mediocre DR — real camera crushes shadows
+    //    harder than baseline; output retained too much shadow detail).
+    //  - highlightClip 0.06→0.12 (mediocre DR also blows highlights;
+    //    window in flash scene should be near-featureless, not detailed).
+    //  - grain 0.3→0.46 + chromaNoise 0.2→0.34 (output was too clean for
+    //    a 2007 CCD at ISO 100; real Exilim has visible luminance + color
+    //    noise, especially in shadows).
+    //  - softness 0.56→0.66 + vignette 0.14→0.22 / radius 0.95→0.86 (real
+    //    Exilim lens is a 'weak component' — significant corner softness +
+    //    falloff; corners were too sharp in output).
+    //  - NOTE: barrel distortion (real Exilim trait at wide angle) is NOT
+    //    simulated — would require a UV-warp shader stage not in the current
+    //    single-pass pipeline. Flagged in RESEARCH.md as a follow-up.
     tint: [1.025, 1.0, 1.0],
     warmth: 0.12,
-    saturation: 0.84,
+    saturation: 0.76,
     contrast: 0.92,
     brightness: 1.05,
-    shadowCrush: 0.1,
-    highlightClip: 0.06,
-    grain: 0.3,
+    shadowCrush: 0.18,
+    highlightClip: 0.12,
+    grain: 0.46,
     grainScale: 2.0,
-    chromaNoise: 0.2,
+    chromaNoise: 0.34,
     aberration: 0.0022,
-    softness: 0.56,
+    softness: 0.66,
     sharpen: 0.1,
     blockiness: 0.26,
     jpegQuality: 0.68,
-    vignette: 0.14,
-    vignetteRadius: 0.95,
+    vignette: 0.22,
+    vignetteRadius: 0.86,
     flashTint: [1.025, 1.0, 0.98],
     sensorMaxSize: 1400,
   },
