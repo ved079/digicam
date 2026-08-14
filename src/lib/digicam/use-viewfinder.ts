@@ -12,14 +12,17 @@
 
 import * as React from "react";
 import { GLRenderer } from "./gl-renderer";
-import { getPreset, presetToUniforms } from "./presets";
+import { getPreset, presetToUniforms, withVideo } from "./presets";
 import type { PresetId } from "./presets";
+import { VIDEO_PROFILE } from "./video-profile";
 
 export interface ViewfinderParams {
   preset: PresetId;
   intensity: number;
   mirror: boolean;
   isoBoost: number;
+  /** when true, the live preview renders the distinct camcorder video profile */
+  videoMode: boolean;
 }
 
 export function useViewfinder(
@@ -111,14 +114,18 @@ export function useViewfinder(
         // just an armed state. The flash effect fires only at capture time
         // (see captureFrame in effects.ts, gated by the shutter code path),
         // matching how a real xenon flash only fires for the captured frame.
-        renderer.setUniforms(
-          presetToUniforms(presetDef, p.intensity, {
-            time: (performance.now() - start) / 1000,
-            isoBoost: p.isoBoost,
-            flashOn: false,
-            mirror: p.mirror,
-          }),
-        );
+        let uniforms = presetToUniforms(presetDef, p.intensity, {
+          time: (performance.now() - start) / 1000,
+          isoBoost: p.isoBoost,
+          flashOn: false,
+          mirror: p.mirror,
+        });
+        // In video mode, layer the distinct camcorder profile on top so the
+        // live preview matches what gets recorded (WYSIWYG for video too).
+        if (p.videoMode) {
+          uniforms = withVideo(uniforms, VIDEO_PROFILE, p.intensity);
+        }
+        renderer.setUniforms(uniforms);
         renderer.renderToScreen();
       }
 

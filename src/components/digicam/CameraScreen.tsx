@@ -13,10 +13,12 @@ import {
 } from "lucide-react";
 import { useDigiCam } from "@/lib/digicam/store";
 import { useCamera } from "@/lib/digicam/use-camera";
-import { getPreset } from "@/lib/digicam/presets";
+import { getPreset, presetToUniforms, withVideo } from "@/lib/digicam/presets";
 import { captureFrame, stampTimestamp } from "@/lib/digicam/effects";
 import { useViewfinder } from "@/lib/digicam/use-viewfinder";
 import { createCheapMicStream } from "@/lib/digicam/audio-effects";
+import { GLRenderer } from "@/lib/digicam/gl-renderer";
+import { VIDEO_PROFILE, video43Dimensions, computeCoverUv } from "@/lib/digicam/video-profile";
 import { savePhoto, type PhotoMeta } from "@/lib/digicam/db";
 import { DEMO_SCENES, loadDemoImage } from "@/lib/digicam/demo";
 import { cn } from "@/lib/utils";
@@ -105,6 +107,10 @@ export function CameraScreen() {
       // we also nudge it up in low-light; here we use a fixed sensible default
       // since true scene-luma analysis would stall the GPU pipeline).
       isoBoost: 0.3 + intensity * 0.35,
+      // In video mode the live preview renders the distinct camcorder profile
+      // (heavy softness, chroma bleed, interlace, blowout, haze) so the user
+      // sees what gets recorded. Photo mode renders only the photo pipeline.
+      videoMode: mode === "video",
       // NOTE: flashOn is intentionally NOT passed here. The live preview must
       // never apply the flash shader pass — flash mode is just an armed state.
       // The flash effect fires only at capture (captureFrame gets flashOn),
@@ -165,7 +171,15 @@ export function CameraScreen() {
   const micGraphRef = React.useRef<ReturnType<typeof createCheapMicStream> | null>(null);
   const recordStreamRef = React.useRef<MediaStream | null>(null);
 
-  // Clean up recorder/timers/audio on unmount
+  // ---- 4:3 video recording canvas + renderer (distinct camcorder pipeline) ----
+  // Video is recorded from a dedicated 4:3 canvas rendered through the video
+  // profile (withVideo), so the output is authentically 4:3 SD with the
+  // heavier camcorder artifacts — separate from the photo pipeline.
+  const videoRecordCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const videoRecordRendererRef = React.useRef<GLRenderer | null>(null);
+  const videoRecordRafRef = React.useRef<number | null>(null);
+
+  // Clean up recorder/timers/audio/renderers on unmount
   React.useEffect(() => {
     return () => {
       if (recordTickRef.current) window.clearInterval(recordTickRef.current);
@@ -179,6 +193,11 @@ export function CameraScreen() {
       if (micGraphRef.current) micGraphRef.current.cleanup();
       if (recordStreamRef.current) {
         recordStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (videoRecordRafRef.current) cancelAnimationFrame(videoRecordRafRef.current);
+      if (videoRecordRendererRef.current) {
+        videoRecordRendererRef.current.dispose();
+        videoRecordRendererRef.current = null;
       }
     };
   }, []);
@@ -308,27 +327,106 @@ export function CameraScreen() {
       }
       return;
     }
-    const canvas = viewfinderCanvasRef.current;
-    if (!canvas || !("MediaRecorder" in window)) {
+    // Source dims drive the 4:3 recording canvas dimensions + cover crop.
+    const src = demoMode ? demoImg : videoRef.current;
+    const srcW =
+      src instanceof HTMLVideoElement
+        ? src.videoWidth
+        : src instanceof HTMLImageElement
+          ? src.naturalWidth
+          : 0;
+    const srcH =
+      src instanceof HTMLVideoElement
+        ? src.videoHeight
+        : src instanceof HTMLImageElement
+          ? src.naturalHeight
+          : 0;
+    if (!srcW || !srcH || !("MediaRecorder" in window)) {
       showToast("Video recording not supported");
       return;
     }
-    if (typeof canvas.captureStream !== "function") {
+
+    // 4:3 recording canvas (3:4 portrait for portrait sources, matching
+    // how period camcorders never shot 16:9).
+    const dims = video43Dimensions(srcW, srcH, VIDEO_PROFILE);
+    const coverUv = computeCoverUv(srcW, srcH, dims.width, dims.height);
+
+    let recCanvas = videoRecordCanvasRef.current;
+    if (!recCanvas) {
+      recCanvas = document.createElement("canvas");
+      videoRecordCanvasRef.current = recCanvas;
+    }
+    recCanvas.width = dims.width;
+    recCanvas.height = dims.height;
+
+    // Init a dedicated GLRenderer for the 4:3 recording canvas. This runs
+    // the distinct camcorder video profile (withVideo) so the recorded
+    // output has the heavier video artifacts, separate from the photo path.
+    let recRenderer: GLRenderer;
+    try {
+      // Dispose any prior renderer first.
+      if (videoRecordRendererRef.current) {
+        videoRecordRendererRef.current.dispose();
+        videoRecordRendererRef.current = null;
+      }
+      recRenderer = new GLRenderer(recCanvas);
+      videoRecordRendererRef.current = recRenderer;
+    } catch (e) {
+      console.warn("video record renderer init failed", e);
+      showToast("Video recording not supported");
+      return;
+    }
+    if (typeof recCanvas.captureStream !== "function") {
       showToast("captureStream unsupported");
       return;
     }
+
     try {
-      // Processed video track from the canvas (30fps target).
-      const videoStream = canvas.captureStream(30);
+      // rAF loop: render the source through the video pipeline to the 4:3
+      // canvas each frame. The recorded stream captures this canvas.
+      const startPerf = performance.now();
+      const renderFrame = () => {
+        const r = videoRecordRendererRef.current;
+        const c = videoRecordCanvasRef.current;
+        const s = demoMode ? demoImg : videoRef.current;
+        if (!r || !c || !s) {
+          videoRecordRafRef.current = requestAnimationFrame(renderFrame);
+          return;
+        }
+        const ready =
+          s instanceof HTMLVideoElement
+            ? s.readyState >= 2 && s.videoWidth > 0
+            : s instanceof HTMLImageElement
+              ? s.complete && s.naturalWidth > 0
+              : false;
+        if (ready) {
+          let u = presetToUniforms(presetDef, intensity, {
+            time: (performance.now() - startPerf) / 1000,
+            isoBoost: 0.3 + intensity * 0.35,
+            flashOn: false,
+            mirror,
+          });
+          u = withVideo(u, VIDEO_PROFILE, intensity);
+          u.uCoverUv = coverUv;
+          r.setSource(s);
+          r.setUniforms(u);
+          r.renderToScreen();
+        }
+        videoRecordRafRef.current = requestAnimationFrame(renderFrame);
+      };
+      videoRecordRafRef.current = requestAnimationFrame(renderFrame);
+
+      // Processed video track from the 4:3 canvas (30fps target).
+      const videoStream = recCanvas.captureStream(30);
 
       // Processed audio track — route mic through the cheap-mic chain.
       const camStream = getStream();
       let combined = videoStream;
       if (camStream) {
         const micGraph = createCheapMicStream(camStream, {
-          lowFreq: 250,
-          highFreq: 5500,
-          hiss: 0.06,
+          lowFreq: VIDEO_PROFILE.audioLowFreq,
+          highFreq: VIDEO_PROFILE.audioHighFreq,
+          hiss: VIDEO_PROFILE.audioHiss,
           distortion: 0.12,
         });
         if (micGraph) {
@@ -354,12 +452,13 @@ export function CameraScreen() {
         const type = rec.mimeType || mime || "video/webm";
         const blob = new Blob(chunksRef.current, { type });
         const ext = videoExtensionForMime(type);
+        const recCanvasNow = videoRecordCanvasRef.current;
         const meta: PhotoMeta = {
           id: uid(),
           blob,
           url: URL.createObjectURL(blob),
-          width: canvas.width,
-          height: canvas.height,
+          width: recCanvasNow?.width ?? dims.width,
+          height: recCanvasNow?.height ?? dims.height,
           createdAt: Date.now(),
           preset,
           intensity,
@@ -373,7 +472,15 @@ export function CameraScreen() {
           window.clearInterval(recordTickRef.current);
           recordTickRef.current = null;
         }
-        // tear down audio graph
+        // tear down the video-record rAF + renderer + audio graph
+        if (videoRecordRafRef.current) {
+          cancelAnimationFrame(videoRecordRafRef.current);
+          videoRecordRafRef.current = null;
+        }
+        if (videoRecordRendererRef.current) {
+          videoRecordRendererRef.current.dispose();
+          videoRecordRendererRef.current = null;
+        }
         if (micGraphRef.current) {
           micGraphRef.current.cleanup();
           micGraphRef.current = null;
@@ -392,6 +499,15 @@ export function CameraScreen() {
       }, 250);
     } catch (e) {
       console.error(e);
+      // tear down partial setup
+      if (videoRecordRafRef.current) {
+        cancelAnimationFrame(videoRecordRafRef.current);
+        videoRecordRafRef.current = null;
+      }
+      if (videoRecordRendererRef.current) {
+        videoRecordRendererRef.current.dispose();
+        videoRecordRendererRef.current = null;
+      }
       showToast("Could not start recording");
     }
   };
@@ -534,6 +650,11 @@ export function CameraScreen() {
 
         {/* composition grid lines */}
         {settings.gridLines && <GridLines />}
+
+        {/* 4:3 video framing guide — shows the recorded area in video mode.
+            Period camcorders never shot 16:9; the recording is 4:3 (3:4 for
+            portrait), so we dim the letterboxed regions with a subtle mask. */}
+        {mode === "video" && <Video43Guide />}
 
         {/* One-shot UI flash-burst overlay — fires only at the shutter moment
             when flash is armed. A brief bright warm-white bloom that fades in
@@ -774,6 +895,33 @@ function GridLines() {
       <div className="absolute left-2/3 top-0 h-full w-px bg-white/15" />
       <div className="absolute left-0 top-1/3 h-px w-full bg-white/15" />
       <div className="absolute left-0 top-2/3 h-px w-full bg-white/15" />
+    </div>
+  );
+}
+
+/**
+ * 4:3 video framing guide. The viewfinder canvas is portrait (fills the
+ * screen). In video mode the recording is 3:4 portrait — so the top and
+ * bottom strips (outside the 3:4 region) are dimmed so the user sees what
+ * will actually be recorded. Uses CSS aspect-ratio math: for a 3:4 region
+ * centered in a taller container, the recorded band is 3/4 as tall relative
+ * to its width. We approximate with top/bottom percentage masks derived from
+ * the 3:4 ratio vs the full-height portrait frame.
+ */
+function Video43Guide() {
+  // For a portrait viewfinder of aspect ~9:16, the 3:4 recorded region
+  // occupies (3/4)/(9/16) = (0.75)/(0.5625) > 1 → the 3:4 region is actually
+  // wider than the frame is tall, meaning in a 9:16 viewfinder a 3:4 region
+  // crops the SIDES, not top/bottom. computeCoverUv handles the real crop;
+  // this guide is a visual approximation. We draw side masks since portrait
+  // 3:4 vs 9:16 crops left/right.
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      {/* dim the side regions that fall outside the 3:4 recording crop */}
+      <div className="absolute inset-y-0 left-0 w-[12.5%] bg-black/45" />
+      <div className="absolute inset-y-0 right-0 w-[12.5%] bg-black/45" />
+      {/* thin frame line on the recorded region */}
+      <div className="absolute inset-y-0 left-[12.5%] right-[12.5%] border-x border-white/20" />
     </div>
   );
 }

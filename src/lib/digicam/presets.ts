@@ -5,6 +5,8 @@
 // look; presetToUniforms() blends from identity (intensity 0) to the
 // full camera signature (intensity 1).
 
+import type { VideoProfile } from "./video-profile";
+
 export type PresetId = "powershot" | "cybershot" | "exilim" | "cell";
 
 export interface DigicamPreset {
@@ -244,6 +246,25 @@ export interface PipelineUniforms {
   uFlashOn: number;
   uFlashTint: [number, number, number];
   uMirror: number;
+  // ---- Video-mode uniforms (distinct camcorder profile) ----
+  // All default to 0 / off so photo rendering is unaffected unless a caller
+  // explicitly enables video mode via `withVideo()`.
+  uVideoMode: number; // 0 = photo, 1 = video (enables video stages)
+  uVideoSoftness: number;
+  uChromaBleed: number;
+  uBloomThreshold: number;
+  uInterlace: number;
+  uInterlaceMotion: number;
+  uBlowoutThreshold: number;
+  uStreakAmount: number;
+  uHazeLift: number;
+  uHazeReduce: number;
+  uVideoGrain: number;
+  uVideoGrainScale: number;
+  uVideoVignette: number;
+  uVideoVignetteRadius: number;
+  /** object-cover UV sub-rect (minX,minY,maxX,maxY); (0,0,1,1) = no crop */
+  uCoverUv: [number, number, number, number];
 }
 
 /**
@@ -301,6 +322,54 @@ export function presetToUniforms(
     uFlashOn: opts.flashOn ? 1 : 0,
     uFlashTint: preset.flashTint,
     uMirror: opts.mirror ? 1 : 0,
+    // video-mode uniforms default OFF — photo rendering is unaffected unless
+    // a caller merges in a VideoProfile via withVideo().
+    uVideoMode: 0,
+    uVideoSoftness: 0,
+    uChromaBleed: 0,
+    uBloomThreshold: 1.0,
+    uInterlace: 0,
+    uInterlaceMotion: 0,
+    uBlowoutThreshold: 1.0,
+    uStreakAmount: 0,
+    uHazeLift: 0,
+    uHazeReduce: 0,
+    uVideoGrain: 0,
+    uVideoGrainScale: 1.0,
+    uVideoVignette: 0,
+    uVideoVignetteRadius: 1.0,
+    uCoverUv: [0, 0, 1, 1],
+  };
+}
+
+/**
+ * Merge a VideoProfile into a PipelineUniforms set, enabling the video-mode
+ * shader stages. The video look layers ON TOP of the photo preset's color
+ * science (so a "PowerShot video" still reads warm) but adds the heavier
+ * camcorder artifacts. Intensity scales the video stages too.
+ */
+export function withVideo(
+  base: PipelineUniforms,
+  profile: VideoProfile,
+  intensity: number,
+): PipelineUniforms {
+  const k = clamp(intensity, 0, 1);
+  return {
+    ...base,
+    uVideoMode: 1,
+    uVideoSoftness: profile.softness * k,
+    uChromaBleed: profile.chromaBleed * k,
+    uBloomThreshold: profile.bloomThreshold,
+    uInterlace: profile.interlace * k,
+    uInterlaceMotion: profile.interlaceMotion,
+    uBlowoutThreshold: profile.blowoutThreshold,
+    uStreakAmount: profile.streakAmount * k,
+    uHazeLift: profile.hazeLift * k,
+    uHazeReduce: profile.hazeReduce * k,
+    uVideoGrain: profile.grain * k,
+    uVideoGrainScale: profile.grainScale,
+    uVideoVignette: profile.vignette * k,
+    uVideoVignetteRadius: profile.vignetteRadius,
   };
 }
 

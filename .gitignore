@@ -58,3 +58,6 @@ shot-*.png
 
 # Task A comparison captures (keep committed set as documentation; ignore future runs)
 /task-a-captures/
+
+# user-uploaded reference images
+/upload/

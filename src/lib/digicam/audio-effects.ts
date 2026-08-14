@@ -98,6 +98,13 @@ export function createCheapMicStream(
     noiseGain.connect(master);
 
     const dest = ctx.createMediaStreamDestination();
+    // Force a single (mono) output channel — cheap camcorder mics were mono,
+    // not the wide stereo of a modern phone mic.
+    if (typeof dest.channelCount !== "undefined") {
+      dest.channelCount = 1;
+      dest.channelCountMode = "explicit";
+      dest.channelInterpretation = "speakers";
+    }
     master.connect(dest);
 
     noise.start();

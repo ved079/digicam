@@ -154,6 +154,22 @@ export class GLRenderer {
     gl.uniform1i(this.uniforms.uFlashOn, u.uFlashOn);
     gl.uniform3f(this.uniforms.uFlashTint, u.uFlashTint[0], u.uFlashTint[1], u.uFlashTint[2]);
     gl.uniform1f(this.uniforms.uMirror, u.uMirror);
+    // video-mode uniforms (no-ops when uVideoMode == 0)
+    gl.uniform1i(this.uniforms.uVideoMode, u.uVideoMode);
+    gl.uniform1f(this.uniforms.uVideoSoftness, u.uVideoSoftness);
+    gl.uniform1f(this.uniforms.uChromaBleed, u.uChromaBleed);
+    gl.uniform1f(this.uniforms.uBloomThreshold, u.uBloomThreshold);
+    gl.uniform1f(this.uniforms.uInterlace, u.uInterlace);
+    gl.uniform1f(this.uniforms.uInterlaceMotion, u.uInterlaceMotion);
+    gl.uniform1f(this.uniforms.uBlowoutThreshold, u.uBlowoutThreshold);
+    gl.uniform1f(this.uniforms.uStreakAmount, u.uStreakAmount);
+    gl.uniform1f(this.uniforms.uHazeLift, u.uHazeLift);
+    gl.uniform1f(this.uniforms.uHazeReduce, u.uHazeReduce);
+    gl.uniform1f(this.uniforms.uVideoGrain, u.uVideoGrain);
+    gl.uniform1f(this.uniforms.uVideoGrainScale, u.uVideoGrainScale);
+    gl.uniform1f(this.uniforms.uVideoVignette, u.uVideoVignette);
+    gl.uniform1f(this.uniforms.uVideoVignetteRadius, u.uVideoVignetteRadius);
+    gl.uniform4f(this.uniforms.uCoverUv, u.uCoverUv[0], u.uCoverUv[1], u.uCoverUv[2], u.uCoverUv[3]);
   }
 
   /** Set the canvas drawing-buffer size (device pixels). */
